@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "okpd-classifier"
+version = "0.1.0"
+description = "Классификация номенклатурных позиций по ОКПД2 и расчет НДС"
+readme = "README.md"
+requires-python = ">=3.9,<3.13"
+dependencies = [
+  "numpy>=1.24.0",
+  "openpyxl>=3.1.0",
+  "pandas>=2.0.0",
+  "scikit-learn>=1.3.0",
+  "torch>=2.0.0",
+  "transformers>=4.30.0",
+  "tokenizers>=0.13.0",
+  "datasets>=2.12.0",
+]
+
+[project.scripts]
+okpd-cli = "cli:main"
+
+[tool.setuptools]
+py-modules = [
+  "bert_okpd_classifier",
+  "cli",
+  "config",
+  "data_loader",
+  "main",
+  "main_bert_okpd",
+  "main_bert_unified",
+  "okpd_classifier",
+  "output_manager",
+  "pipelines",
+  "run",
+  "text_processor",
+  "vat_processor",
+]
