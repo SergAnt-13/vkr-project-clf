@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from config import config
-
+from striprtf.striprtf import rtf_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +251,17 @@ class DataLoader:
             logger.info("RTF преобразован в текст через textutil, длина %s символов", len(text))
             return text
         except Exception as exc:
+            try:
+                with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                    rtf_content = f.read()
+                text = rtf_to_text(rtf_content)
+                logger.info("RTF преобразован через striprtf")
+                return text
+            except ImportError:
+                logger.error("Установите striprtf: pip install striprtf")
+            except Exception as e2:
+                logger.error("Ошибка striprtf: %s", e2)
+
             logger.error("Ошибка загрузки ПП-908: %s", exc)
             return ""
 

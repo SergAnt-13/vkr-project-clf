@@ -168,7 +168,17 @@ class OutputManager:
                 f"Покрытие: {vat_stats.get('coverage_rate', 0):.2%}",
                 ""
             ])
-        
+        # Метрики качества классификации, если они переданы
+        if 'metrics' in statistics:
+            metrics = statistics['metrics']
+            if metrics:
+                report_lines.extend([
+                    "=== МЕТРИКИ КАЧЕСТВА КЛАССИФИКАЦИИ ===",
+                    f"Accuracy (Точность): {metrics.get('accuracy', 0):.4f}",
+                    f"F1 (макро): {metrics.get('f1_macro', 0):.4f}",
+                    f"F1 (взвешенная): {metrics.get('f1_weighted', 0):.4f}",
+                    ""
+                ])
         report = "\n".join(report_lines)
         
         # Сохранить отчет в файл

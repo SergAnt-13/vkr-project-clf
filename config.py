@@ -59,7 +59,7 @@ class Config:
     BERT_BATCH_SIZE_STANDARD: int = 8
     BERT_BATCH_SIZE_ENHANCED: int = 16
     BERT_NUM_EPOCHS_STANDARD: int = 3
-    BERT_NUM_EPOCHS_ENHANCED: int = 5
+    BERT_NUM_EPOCHS_ENHANCED: int = 7
     BERT_LEARNING_RATE: float = 2e-5
     BERT_MIN_SAMPLES_PER_CLASS_STANDARD: int = 10
     BERT_MIN_SAMPLES_PER_CLASS_ENHANCED: int = 5
@@ -73,12 +73,12 @@ class Config:
             "id": [
                 "идентификатор номенклатуры",
                 "id",
-                "код",
                 "артикул",
                 "item",
                 "номенк",
             ],
             "name": [
+                "Номенклатура",
                 "номенклатура",
                 "наименование",
                 "наиме",
@@ -86,6 +86,7 @@ class Config:
                 "name",
             ],
             "okpd": [
+                "Код ОКПД2",
                 "код окпд2",
                 "окпд2",
                 "окпд",

@@ -77,7 +77,9 @@ class BERTOKPDClassifier:
         """Подготовка данных для обучения"""
         
         # Фильтруем валидные коды
-        valid_series = df[label_column].astype(str).str.strip()
+        valid_series = df[label_column].apply(
+            lambda x: str(x).strip() if pd.notna(x) and str(x).strip().lower() != 'nan' else ""
+        )
         valid_mask = valid_series.apply(self.is_valid_code)
         valid_df = df[valid_mask].copy()
         
@@ -198,7 +200,7 @@ class BERTOKPDClassifier:
         
         # Обучение
         self.model.train()
-        best_accuracy = 0
+        best_f1 = 0.0
         
         for epoch in range(num_epochs):
             total_loss = 0
@@ -223,52 +225,81 @@ class BERTOKPDClassifier:
             logger.info(f"Эпоха {epoch+1}/{num_epochs}, Средние потери: {avg_loss:.4f}")
             
             # Оценка на тестовых данных
-            accuracy = self._evaluate_model(test_loader)
-            logger.info(f"Точность на тестовых данных: {accuracy:.3f}")
+            metrics = self._evaluate_model(test_loader)
+            logger.info(f"Точность на тестовых данных: {metrics['accuracy']:.3f}")
             
             # Сохраняем лучшую модель
-            if accuracy > best_accuracy:
-                best_accuracy = accuracy
+            if metrics['weighted_f1'] > best_f1:
+                best_f1 = metrics['weighted_f1']
                 self.save_model(save_path)
-                logger.info(f"Новая лучшая модель сохранена с точностью: {accuracy:.3f}")
+                logger.info(f"Новая лучшая модель сохранена (F1 weighted: {metrics['weighted_f1']:.3f})")
         
         # Финальная оценка
-        final_accuracy = self._evaluate_model(test_loader)
+        final_metrics = self._evaluate_model(test_loader)
         training_time = time.time() - start_time
-        
-        logger.info(f"🎯 Обучение завершено за {training_time:.1f} секунд")
-        logger.info(f"🏆 Финальная точность: {final_accuracy:.3f}")
+
+        logger.info(f"🎯 Итоговые метрики на тесте:")
+        logger.info(f"   Точность (Accuracy): {final_metrics['accuracy']:.4f}")
+        logger.info(f"   F1 (взвешенная): {final_metrics['weighted_f1']:.4f}")
+        logger.info(f"   F1 (макро): {final_metrics['macro_f1']:.4f}")
         
         self.is_trained = True
         
         return {
-            "eval_accuracy": final_accuracy,
+            "accuracy": final_metrics['accuracy'],
+            "weighted_f1": final_metrics['weighted_f1'],
+            "macro_f1": final_metrics['macro_f1'],
+            "classification_report": final_metrics['classification_report'],
             "eval_loss": avg_loss,
             "training_time": training_time,
             "num_classes": num_labels,
             "num_samples": len(texts)
         }
-    
-    def _evaluate_model(self, test_loader) -> float:
-        """Оценка модели на тестовых данных"""
+
+    def _evaluate_model(self, test_loader) -> Dict[str, float]:
+        """Расширенная оценка модели с полными метриками"""
         self.model.eval()
-        correct = 0
-        total = 0
-        
+        all_preds = []
+        all_labels = []
         with torch.no_grad():
             for batch in test_loader:
                 input_ids = batch['input_ids'].to(self.device)
                 attention_mask = batch['attention_mask'].to(self.device)
                 labels = batch['labels'].to(self.device)
-                
                 outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
                 predictions = torch.argmax(outputs.logits, dim=-1)
-                
-                correct += (predictions == labels).sum().item()
-                total += labels.size(0)
-        
-        accuracy = correct / total
-        return accuracy
+                all_preds.extend(predictions.cpu().tolist())
+                all_labels.extend(labels.cpu().tolist())
+
+        accuracy = accuracy_score(all_labels, all_preds)
+
+        # Важно: список классов берём из label_to_id
+        all_class_ids = sorted(self.label_to_id.values())
+        all_class_names = [self.id_to_label[c] for c in all_class_ids]
+
+        # Сводка по каждому классу
+        report_dict = classification_report(
+            all_labels, all_preds,
+            labels=all_class_ids,
+            target_names=all_class_names,
+            output_dict=True,
+            zero_division=0
+        )
+
+        # Логируем основные агрегированные метрики
+        logger.info(f"Точность (Accuracy): {accuracy:.4f}")
+        logger.info(f"F1 (weighted): {report_dict['weighted avg']['f1-score']:.4f}")
+        logger.info(f"F1 (macro): {report_dict['macro avg']['f1-score']:.4f}")
+        logger.info(f"Precision (weighted): {report_dict['weighted avg']['precision']:.4f}")
+        logger.info(f"Recall (weighted): {report_dict['weighted avg']['recall']:.4f}")
+
+        # Возвращаем словарь с метриками
+        return {
+            "accuracy": accuracy,
+            "weighted_f1": float(report_dict['weighted avg']['f1-score']),
+            "macro_f1": float(report_dict['macro avg']['f1-score']),
+            "classification_report": report_dict
+        }
     
     def predict(self, texts: List[str], batch_size: int = 32) -> Tuple[List[str], List[float]]:
         """Предсказание кодов ОКПД2"""

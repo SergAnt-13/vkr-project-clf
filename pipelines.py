@@ -55,7 +55,7 @@ class BaselinePipeline:
 
         if training_file:
             training_path = Path(training_file)
-            training_df = loader.load_training_data(training_path, max_rows=training_max_rows)
+            training_df = loader.load_merged_products(training_path, max_rows=training_max_rows)
         else:
             training_path = prediction_path
             training_df = loader.load_products(training_path, max_rows=training_max_rows)
@@ -65,6 +65,15 @@ class BaselinePipeline:
 
         prediction_df["name_norm"] = text_processor.normalize_text_series(prediction_df["name_raw"])
         training_df["name_norm"] = text_processor.normalize_text_series(training_df["name_raw"])
+
+        if 'Код ОКПД2' in training_df.columns:
+            training_df['okpd2_current'] = training_df['Код ОКПД2'].astype(str).str.strip()
+        elif 'okpd2_current' not in training_df.columns or training_df['okpd2_current'].isna().all():
+            # пробуем другие возможные названия
+            for col in ['Код ОКПД2', 'код окпд2', 'ОКПД2', 'okpd2']:
+                if col in training_df.columns:
+                    training_df['okpd2_current'] = training_df[col].astype(str).str.strip()
+                    break
 
         labeled_df, _ = classifier.split_labeled_unlabeled(training_df)
         classifier.fit(labeled_df, text_column="name_norm")
@@ -83,14 +92,24 @@ class BaselinePipeline:
 
         result_df["vat_pred"] = vat_processor.process_vat_predictions(result_df, "okpd2_final")
 
+        eval_metrics = {}
+        if len(labeled_df) > 0:
+            eval_metrics = classifier.evaluate(labeled_df, text_column="name_norm")
+
         tables = output_manager.create_analysis_tables(result_df)
         classification_stats = classifier.get_prediction_statistics(predictions_df)
         vat_stats = vat_processor.get_vat_statistics(result_df["vat_pred"].tolist())
 
+        stats_for_report = {
+            "classification": classification_stats,
+            "vat": vat_stats,
+            "metrics": eval_metrics
+        }
+
         report = output_manager.generate_summary_report(
             result_df,
             tables,
-            {"classification": classification_stats, "vat": vat_stats},
+            stats_for_report,
             metadata={
                 "prediction_source": str(prediction_path),
                 "training_source": str(training_path),
@@ -98,6 +117,12 @@ class BaselinePipeline:
         )
         saved_files = output_manager.save_tables(tables, result_df)
         saved_files["report"] = runtime.OUTPUT_DIR / "summary_report.txt"
+
+        if eval_metrics:
+            logger.info("=== ИТОГОВЫЕ МЕТРИКИ (baseline) ===")
+            logger.info(f"Accuracy: {eval_metrics['accuracy']:.4f}")
+            logger.info(f"F1 (macro): {eval_metrics['f1_macro']:.4f}")
+            logger.info(f"F1 (weighted): {eval_metrics['f1_weighted']:.4f}")
 
         return {
             "data": result_df,
@@ -177,7 +202,7 @@ class BERTPipeline:
             classifier.load_model(runtime.MODEL_DIR)
         else:
             fit_kwargs = self._bert_fit_kwargs(runtime, mode)
-            classifier.fit(
+            bert_metrics = classifier.fit(
                 training_df,
                 text_column="name_norm",
                 label_column=label_column,
@@ -214,6 +239,7 @@ class BERTPipeline:
             training_path=training_path,
             label_column=label_column,
             output_file=output_file,
+            metrics=bert_metrics if not load_existing_model else None,
         )
         report_path.write_text(report, encoding="utf-8")
 
@@ -261,11 +287,18 @@ class BERTPipeline:
 
         training_df = training_df.copy()
 
+        # Пробуем взять эталонные коды (okpd2_reference)
         valid_reference = _valid_okpd_mask(training_df["okpd2_reference"], self.config.OKPD2_PATTERN)
         if valid_reference.any():
             training_df["training_label"] = training_df["okpd2_reference"].astype(str).str.strip()
         else:
-            training_df["training_label"] = training_df["okpd2_current"].astype(str).str.strip()
+            # Если эталонных кодов нет, пробуем взять текущие коды (okpd2_current)
+            valid_current = _valid_okpd_mask(training_df["okpd2_current"], self.config.OKPD2_PATTERN)
+            if valid_current.any():
+                training_df["training_label"] = training_df["okpd2_current"].astype(str).str.strip()
+            else:
+                # Если и их нет — заполняем пустыми значениями
+                training_df["training_label"] = ""
 
         return training_df, training_path, "training_label"
 
@@ -319,6 +352,7 @@ class BERTPipeline:
         training_path: Path,
         label_column: str,
         output_file: Path,
+        metrics: Optional[Dict] = None,
     ) -> str:
         total_records = len(predictions_df)
         predicted_records = int(
@@ -335,24 +369,31 @@ class BERTPipeline:
         vat_distribution = predictions_df["vat_final"].value_counts(dropna=False)
 
         lines = [
-            f"BERT mode: {mode}",
-            f"Prediction source: {prediction_path}",
-            f"Training source: {training_path}",
-            f"Training label column: {label_column}",
-            f"Output file: {output_file}",
+            f"Режим BERT: {mode}",
+            f"Файл для предсказаний: {prediction_path}",
+            f"Файл для обучения: {training_path}",
+            f"Колонка с метками обучения: {label_column}",
+            f"Выходной файл: {output_file}",
             "",
-            "Statistics:",
-            f"- total records: {total_records}",
-            f"- rows with predicted code: {predicted_records}",
-            f"- rows with reference labels in prediction file: {labeled_training}",
-            f"- average confidence: {confidence_stats.get('mean', 0.0):.4f}",
-            f"- median confidence: {confidence_stats.get('50%', 0.0):.4f}",
-            f"- max confidence: {confidence_stats.get('max', 0.0):.4f}",
+            "Статистика:",
+            f"- всего записей: {total_records}",
+            f"- записей с предсказанным кодом: {predicted_records}",
+            f"- записей с эталонными метками: {labeled_training}",
+            f"- средняя уверенность: {confidence_stats.get('mean', 0.0):.4f}",
+            f"- медианная уверенность: {confidence_stats.get('50%', 0.0):.4f}",
+            f"- максимальная уверенность: {confidence_stats.get('max', 0.0):.4f}",
             "",
-            "VAT distribution:",
+            "Распределение НДС:",
         ]
 
         for vat_value, count in vat_distribution.items():
             lines.append(f"- {vat_value}: {count}")
 
+        if metrics:
+            lines.append("")
+            lines.append("Метрики качества классификации:")
+            lines.append(f"- Accuracy (Точность): {metrics.get('accuracy', 0.0):.4f}")
+            lines.append(f"- F1 (взвешенная): {metrics.get('weighted_f1', 0.0):.4f}")
+            lines.append(f"- F1 (макро): {metrics.get('macro_f1', 0.0):.4f}")
+            # classification_report при желании можно не выводить, иначе очень много строк
         return "\n".join(lines)

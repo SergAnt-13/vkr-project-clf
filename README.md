@@ -90,39 +90,37 @@
 ### 1. Проверить, что проект видит
 
 ```bash
-./venv/bin/python cli.py inspect-data
+./.venv/Scripts/python cli.py inspect-data
 ```
 
 ### 2. Безопасный быстрый тест baseline
 
 ```bash
-./venv/bin/python cli.py baseline --max-rows 500
+./.venv/Scripts/python cli.py baseline --max-rows 500
+```
+
+### 2.1. Безопасный быстрый тест baseline + дообучение
+
+```bash
+.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx"
 ```
 
 ### 3. Полный baseline
 
 ```bash
-./venv/bin/python cli.py baseline
+./.venv/Scripts/python cli.py baseline
 ```
 
-### 4. BERT на встроенных данных
+### 4. BERT на встроенных данных (дообучение при наличии файла)
 
 ```bash
-./venv/bin/python cli.py bert --mode enhanced
+.\.venv\Scripts\python cli.py bert ` --mode enhanced
 ```
 
-### 5. BERT на отдельном обучающем файле
+### 5. Интерактивный запуск
 
 ```bash
-./venv/bin/python cli.py bert \
-  --mode standard \
-  --training-file "/путь/к/вашему_размеченному_файлу.xlsx"
-```
-
-### 6. Интерактивный запуск
-
-```bash
-./venv/bin/python run.py
+./.venv/Scripts/python run.py
 ```
 
 ## Куда сохраняются результаты

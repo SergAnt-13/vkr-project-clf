@@ -9,7 +9,7 @@ from typing import List, Tuple, Optional
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from config import config
-
+from sklearn.metrics import accuracy_score, f1_score, classification_report
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +36,13 @@ class OKPDClassifier:
     
     def split_labeled_unlabeled(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """Разделить данные на размеченные и неразмеченные"""
-        df["okpd2_current"] = df["okpd2_current"].astype(str).str.strip()
-        
+        df["okpd2_current"] = df["okpd2_current"].apply(
+            lambda x: str(x).strip() if pd.notna(x) and str(x).strip().lower() != 'nan' else ""
+        )
         labeled_mask = df["okpd2_current"].apply(self.is_valid_code)
         labeled = df[labeled_mask].copy()
         unlabeled = df[~labeled_mask].copy()
-        
         logger.info(f"Размеченных записей: {len(labeled)}, неразмеченных: {len(unlabeled)}")
-        
         return labeled, unlabeled
     
     def fit(self, labeled_df: pd.DataFrame, text_column: str = "name_norm"):
@@ -175,3 +174,52 @@ class OKPDClassifier:
         }
         
         return stats
+
+    def evaluate(self, test_df: pd.DataFrame, text_column: str = "name_norm") -> dict:
+        """
+        Оценить качество классификатора на тестовых данных.
+
+        Parameters:
+            test_df: DataFrame с колонками text_column и "okpd2_current" (истинные коды)
+            text_column: название колонки с нормализованными текстами
+
+        Returns:
+            словарь с метриками accuracy, f1_macro, f1_weighted и classification_report
+        """
+        if self.vectorizer is None or self.labeled_data is None:
+            raise ValueError("Модель не обучена. Сначала вызовите fit().")
+
+        # Предсказание на тестовых данных
+        predictions_df = self.predict(test_df, text_column=text_column)
+
+        # Извлекаем истинные и предсказанные значения
+        y_true = test_df["okpd2_current"].astype(str).str.strip()
+        y_pred = predictions_df["okpd2_pred"].astype(str).str.strip()
+
+        # Заменяем пустые предсказания на "unknown" для корректного отчёта
+        # (можно оставить как есть, но тогда пустые строки будут считаться отдельным классом)
+        y_pred = y_pred.replace("", "unknown")
+
+        # Вычисляем метрики
+        accuracy = accuracy_score(y_true, y_pred)
+        f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
+        f1_weighted = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+        report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+
+        # Логируем ключевые метрики
+        logger.info("=== Оценка качества Baseline-модели ===")
+        logger.info(f"Accuracy: {accuracy:.4f}")
+        logger.info(f"F1 (macro): {f1_macro:.4f}")
+        logger.info(f"F1 (weighted): {f1_weighted:.4f}")
+        logger.info(f"Precision (weighted): {report['weighted avg']['precision']:.4f}")
+        logger.info(f"Recall (weighted): {report['weighted avg']['recall']:.4f}")
+
+        # Формируем возвращаемый словарь
+        metrics = {
+            "accuracy": accuracy,
+            "f1_macro": f1_macro,
+            "f1_weighted": f1_weighted,
+            "classification_report": report
+        }
+
+        return metrics
