@@ -169,45 +169,28 @@ class DataLoader:
 
         return result
 
-    def load_abbreviations(self) -> List[Tuple[str, str]]:
-        """Загрузить правила сокращений из Excel-файла."""
-        path = self.config.ABBREVIATIONS_FILE
-        if not path.exists():
-            logger.warning("Файл сокращений не найден: %s", path)
+    def load_abbreviations(self):
+        """Загрузить правила сокращений. Возвращает список словарей с ключами pattern, replacement, okpd_codes."""
+        abbrev_path = self.config.ABBREVIATIONS_FILE
+        if not abbrev_path.exists():
+            logger.warning(f"Файл сокращений не найден: {abbrev_path}")
             return []
-
-        try:
-            df = pd.read_excel(path)
-        except Exception as exc:
-            logger.error("Не удалось прочитать файл сокращений: %s", exc)
-            return []
-
-        df.columns = [str(col).strip().lower() for col in df.columns]
-
-        if len(df.columns) >= 2:
-            pattern_col, replacement_col = df.columns[:2]
-            rules = [
-                (self._normalize_abbreviation_pattern(pattern), str(replacement).strip())
-                for pattern, replacement in df[[pattern_col, replacement_col]].dropna().values
-            ]
-            rules = [(pattern, replacement) for pattern, replacement in rules if pattern and replacement]
-            logger.info("Загружено %s правил сокращений", len(rules))
-            return rules
-
-        only_column = df.columns[0]
-        parsed_rules: List[Tuple[str, str]] = []
-
-        for raw_value in df[only_column].dropna():
-            parts = [part.strip() for part in str(raw_value).split(";") if part.strip()]
-            if len(parts) < 2:
-                continue
-            pattern = self._normalize_abbreviation_pattern(parts[0])
-            replacement = parts[1]
-            if pattern and replacement:
-                parsed_rules.append((pattern, replacement))
-
-        logger.info("Загружено %s правил сокращений из одноколоночного файла", len(parsed_rules))
-        return parsed_rules
+        df = pd.read_excel(abbrev_path)
+        rules = []
+        for _, row in df.iterrows():
+            # Ищем колонки по имени
+            pattern = str(row.get('abbr', row.iloc[0])).strip()
+            replacement = str(row.get('expansion', row.iloc[1] if len(row) > 1 else '')).strip()
+            okpd_codes = str(row.get('okpd_codes', '')).strip()
+            if not okpd_codes or okpd_codes == 'nan':
+                okpd_codes = ''
+            rules.append({
+                'pattern': pattern,
+                'replacement': replacement,
+                'okpd_codes': okpd_codes
+            })
+        logger.info(f"Загружено {len(rules)} правил сокращений")
+        return rules
 
     def _normalize_abbreviation_pattern(self, raw_pattern: object) -> str:
         """Подготовить шаблон сокращения к использованию в regex."""

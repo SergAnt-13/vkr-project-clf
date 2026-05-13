@@ -37,15 +37,17 @@ class TextProcessor:
         
         translator = str.maketrans(self.config.LAT_TO_CYR_MAP)
         return unicodedata.normalize("NFC", text).translate(translator)
-    
+
     def apply_abbreviations(self, text: str) -> str:
-        """Применить правила сокращений к тексту"""
+        if not self.abbreviation_rules:
+            return text
         result = text
-        for pattern, replacement in self.abbreviation_rules:
+        for rule in self.abbreviation_rules:
+            pattern = rule['pattern']
+            replacement = rule['replacement']
             try:
                 result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-            except re.error as e:
-                logger.warning(f"Ошибка в правиле сокращения '{pattern}' -> '{replacement}': {e}")
+            except re.error:
                 continue
         return result
     

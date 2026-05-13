@@ -107,43 +107,29 @@
 
 ## === Прогон моделей на реальных данных ===
 
-### 1. Baseline на всей товарной номенклатуре
+### 1 Baseline на полной номенклатуре
 
 ```bash
 .\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx"
 ```
 
-### 2. BERT на всей товарной номенклатуре (дообучение при наличии файла)
+### 2 BERT на исходном merged для обучения (1500 записей):
 
 ```bash
-.\.venv\Scripts\python cli.py bert --mode enhanced
+.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_merged.xlsx"
 ```
 
-### 3.1 Запуск BERT с расширенной обучающей выборкой (выполнять после п.2)
-
-```bash
-.\.venv\Scripts\python enrich_training.py
-```
-
-### 3.2 Переобучение BERT на расширенном файле
-
+### 3 BERT на расширенном enriched для обучения (3500 записей)
 ```bash
 .\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx"
 ```
 
-### 3.3 Качество обучения на отложенной выборке
-
+### 4 Сравнение моделей
 ```bash
-.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx" --validate --load-existing-model
+.\.venv\Scripts\python compare_models.py
 ```
 
-### 3.4 Предсказание на большом файле
-```bash
-.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx" --load-existing-model
-```
-
-
-### 4. Интерактивный запуск
+### 5. Интерактивный запуск
 
 ```bash
 .\.venv\Scripts\python run.py

@@ -307,12 +307,18 @@ class BERTPipeline:
         self.config = config_obj or config
 
     def _runtime_config(
-            self,
-            output_dir: Optional[Path] = None,
-            model_dir: Optional[Path] = None,
+        self,
+        output_dir: Optional[Path] = None,
+        model_dir: Optional[Path] = None,
+        training_file: Optional[Path] = None,
     ):
         runtime = replace(self.config)
-        runtime.OUTPUT_DIR = Path(output_dir) if output_dir else runtime.BERT_OUTPUT_DIR
+        # Если указан training_file, создаём подпапку с его именем
+        if training_file:
+            base_dir = Path(output_dir) if output_dir else runtime.BERT_OUTPUT_DIR
+            runtime.OUTPUT_DIR = base_dir / Path(training_file).stem
+        else:
+            runtime.OUTPUT_DIR = Path(output_dir) if output_dir else runtime.BERT_OUTPUT_DIR
         runtime.MODEL_DIR = Path(model_dir) if model_dir else runtime.MODEL_DIR
         runtime.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         runtime.MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -330,7 +336,7 @@ class BERTPipeline:
             training_max_rows: Optional[int] = None,
             validate: bool = False,
     ) -> Dict[str, object]:
-        runtime = self._runtime_config(output_dir, model_dir)
+        runtime = self._runtime_config(output_dir, model_dir, training_file)
         loader = DataLoader(runtime)
         vat_processor = VATProcessor(runtime)
         output_manager = OutputManager(runtime)
@@ -358,6 +364,7 @@ class BERTPipeline:
         )
 
         abbreviation_rules = loader.load_abbreviations()
+        self.abbreviation_rules = abbreviation_rules
         text_processor = TextProcessor(abbreviation_rules=abbreviation_rules, config_obj=runtime)
 
         prediction_df["name_norm"] = text_processor.normalize_text_series(prediction_df["name_raw"])
@@ -376,7 +383,6 @@ class BERTPipeline:
             )
 
             # Получаем предсказания на тестовой выборке, которую BERT сохранил внутри
-            1
             y_true, y_pred_str, confidences = classifier.get_test_predictions()
             y_true_series = pd.Series(y_true)
             y_pred_series = pd.Series(y_pred_str)
@@ -492,8 +498,33 @@ class BERTPipeline:
                 **fit_kwargs,
             )
 
+        # Вычисляем prior на основе обучающей выборки
+        if 'training_label' in training_df.columns:
+            prior = training_df['training_label'].value_counts(normalize=True).to_dict()
+        else:
+            prior = training_df['okpd2_current'].value_counts(normalize=True).to_dict()
+        # Сохраняем в классификатор (если он ожидает)
+        classifier.prior = prior
+
         classifier.set_temperature(1.0)
         predictions_df = classifier.predict_dataframe(prediction_df, text_column="name_norm")
+
+        # === Коррекция уверенности на основе prior (частот классов в обучении) ===
+        if hasattr(classifier, 'prior'):
+            max_prior = max(classifier.prior.values())
+
+            def adjust_conf(row):
+                code = row['okpd2_pred']
+                if code in classifier.prior:
+                    prior_weight = classifier.prior[code] / max_prior
+                    return row['conf'] * prior_weight
+                return row['conf']
+
+            predictions_df['conf'] = predictions_df.apply(adjust_conf, axis=1)
+            logger.info("Уверенность скорректирована на основе априорных вероятностей классов")
+
+        # === Применяем экспертные правила (доменный бустинг) ===
+        predictions_df = self.apply_domain_boosting(predictions_df, text_column="name_norm")
         predictions_df["okpd2_final"] = predictions_df.apply(self._choose_final_okpd, axis=1)
 
         pp908_text = loader.load_pp908_text()
@@ -503,6 +534,43 @@ class BERTPipeline:
         predictions_df["vat_pred"] = vat_processor.process_vat_predictions(predictions_df, "okpd2_final")
         predictions_df["vat_final"] = predictions_df.apply(self._choose_final_vat, axis=1)
 
+        # === Иерархическая точность на основе исходных кодов (если есть) ===
+        if "okpd2_current" in predictions_df.columns:
+            y_true = predictions_df["okpd2_current"].astype(str).str.strip()
+            y_pred = predictions_df["okpd2_pred"].astype(str).str.strip()
+
+            def hierarchical_accuracy_prod(y_true, y_pred, level):
+                correct = total = 0
+                for t, p in zip(y_true, y_pred):
+                    # Приводим к строке и отбрасываем пустые/NaN
+                    t_str = str(t).strip() if pd.notna(t) else ""
+                    p_str = str(p).strip() if pd.notna(p) else ""
+                    if t_str in ("", "nan", "unknown") or p_str in ("", "nan", "unknown"):
+                        continue
+                    if level == 1 and t_str[:2] == p_str[:2]:
+                        correct += 1
+                    elif level == 2 and len(t_str) >= 5 and len(p_str) >= 5 and t_str[:5] == p_str[:5]:
+                        correct += 1
+                    elif level == 3 and t_str == p_str:
+                        correct += 1
+                    total += 1
+                return correct / total if total > 0 else 0.0
+
+            acc_class = hierarchical_accuracy_prod(y_true, y_pred, level=1)
+            acc_group = hierarchical_accuracy_prod(y_true, y_pred, level=2)
+            acc_full  = hierarchical_accuracy_prod(y_true, y_pred, level=3)
+
+            logger.info(f"Иерархическая точность на всём файле: класс={acc_class:.4f}, группа={acc_group:.4f}, полный код={acc_full:.4f}")
+
+            # Сохраним эти метрики в отчёт
+            self._prod_metrics = {
+                "acc_class": acc_class,
+                "acc_group": acc_group,
+                "acc_full": acc_full,
+            }
+        else:
+            self._prod_metrics = {}
+
         # === Формирование таблиц анализа (как в Baseline) ===
         if "okpd2_current" in predictions_df.columns and "vat_current" in predictions_df.columns:
             predictions_df["okpd2_final"] = predictions_df.apply(self._choose_final_okpd, axis=1)
@@ -510,6 +578,72 @@ class BERTPipeline:
             output_manager.save_tables(tables, predictions_df)
         else:
             logger.info("Нет эталонных кодов/ставок для сравнения — таблицы неверных не созданы.")
+
+        # ========== PRODUCTION ВИЗУАЛИЗАЦИЯ ==========
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        import numpy as np
+
+        # 1. Гистограмма уверенности
+        plt.figure(figsize=(10, 6))
+        plt.hist(predictions_df['conf'], bins=50, alpha=0.7, color='steelblue')
+        plt.title('Распределение уверенности модели (Production 52K)')
+        plt.xlabel('Уверенность')
+        plt.ylabel('Количество')
+        plt.axvline(x=0.9, color='red', linestyle='--', label='Порог 0.9')
+        plt.legend()
+        prod_conf_path = runtime.OUTPUT_DIR / 'confidence_distribution_prod.png'
+        plt.savefig(prod_conf_path, dpi=150)
+        plt.close()
+
+        # 2. Топ-20 предсказанных кодов
+        top20 = predictions_df['okpd2_pred'].value_counts().nlargest(20)
+        plt.figure(figsize=(12, 6))
+        top20.plot(kind='bar')
+        plt.title('Топ-20 предсказанных кодов ОКПД2 (Production 52K)')
+        plt.xlabel('Код ОКПД2')
+        plt.ylabel('Количество')
+        plt.xticks(rotation=45, ha='right')
+        plt.tight_layout()
+        prod_codes_path = runtime.OUTPUT_DIR / 'predicted_codes_top20.png'
+        plt.savefig(prod_codes_path, dpi=150)
+        plt.close()
+
+        # 3. Сравнение длин названий (train vs prod)
+        if hasattr(self, '_prod_metrics'):  # у нас есть данные из обучающей выборки?
+            # Длины train можно взять из training_df (он доступен)
+            train_lengths = training_df['name_norm'].str.len().dropna()
+            prod_lengths = prediction_df['name_norm'].str.len().dropna()
+            plt.figure(figsize=(10, 6))
+            plt.hist(train_lengths, bins=30, alpha=0.5, label='Train (enriched)', color='blue')
+            plt.hist(prod_lengths, bins=30, alpha=0.5, label='Production (52K)', color='orange')
+            plt.title('Распределение длин названий товаров')
+            plt.xlabel('Длина (символов)')
+            plt.ylabel('Плотность')
+            plt.legend()
+            drift_path = runtime.OUTPUT_DIR / 'name_length_drift.png'
+            plt.savefig(drift_path, dpi=150)
+            plt.close()
+
+        # 4. Иерархическая точность (bar chart) – если сохранены метрики
+        if hasattr(self, '_prod_metrics') and self._prod_metrics:
+            prod_acc = [self._prod_metrics['acc_class'], self._prod_metrics['acc_group'], self._prod_metrics['acc_full']]
+            # Для test-метрик надо бы сохранить, но пока нет. Можно опустить.
+            # Сделаем только prod
+            fig, ax = plt.subplots(figsize=(8, 5))
+            levels = ['Класс (XX)', 'Группа (XX.XX)', 'Полный код']
+            ax.bar(levels, prod_acc, color=['green', 'orange', 'red'])
+            ax.set_ylim(0, 1)
+            ax.set_ylabel('Точность')
+            ax.set_title('Иерархическая точность на Production-файле')
+            for i, v in enumerate(prod_acc):
+                ax.text(i, v + 0.02, f'{v:.2f}', ha='center')
+            hier_path = runtime.OUTPUT_DIR / 'hierarchical_accuracy_prod.png'
+            plt.savefig(hier_path, dpi=150)
+            plt.close()
+            logger.info(f"Графики сохранены: {prod_conf_path}, {prod_codes_path}, {drift_path}, {hier_path}")
+        else:
+            logger.info(f"Графики сохранены: {prod_conf_path}, {prod_codes_path}, {drift_path}")
 
         result_output = prediction_raw.iloc[: len(predictions_df)].copy()
         result_output["Код ОКПД2 (предсказанный)"] = predictions_df["okpd2_pred"].values
@@ -623,9 +757,40 @@ class BERTPipeline:
     def _choose_final_vat(self, row: pd.Series) -> str:
         for field in ("vat_reference", "vat_current", "vat_pred"):
             value = str(row.get(field, "")).strip()
-            if value:
+            if value and value.lower() not in ('', 'nan', 'ндс0', 'ндс12', 'ндс18', 'ндс20'):
+                if value == 'НДС20':
+                    return 'НДС22'
                 return value
-        return ""
+        return 'НДС22'
+
+    def apply_domain_boosting(self, predictions_df: pd.DataFrame, text_column: str = "name_norm") -> pd.DataFrame:
+        if not hasattr(self, 'abbreviation_rules'):
+            logger.warning("Правила сокращений не загружены, доменный бустинг пропущен")
+            return predictions_df
+
+        boosted = 0
+        corrected = 0
+        for idx, row in predictions_df.iterrows():
+            text = str(row.get(text_column, '')).lower()
+            for rule in self.abbreviation_rules:
+                keyword = rule['replacement'].lower()
+                okpd_codes_str = rule.get('okpd_codes', '')
+                if not keyword or not okpd_codes_str:
+                    continue
+                if keyword in text:
+                    possible_codes = [c.strip() for c in okpd_codes_str.split(';') if c.strip()]
+                    if not possible_codes:
+                        continue
+                    if row['okpd2_pred'] in possible_codes:
+                        predictions_df.at[idx, 'conf'] = 0.99
+                        boosted += 1
+                    elif row['conf'] < 0.5:
+                        predictions_df.at[idx, 'okpd2_pred'] = possible_codes[0]
+                        predictions_df.at[idx, 'conf'] = 0.9
+                        corrected += 1
+                    break
+        logger.info(f"Доменный бустинг: повышена уверенность у {boosted} записей, исправлен код у {corrected}")
+        return predictions_df
 
     def _output_filename(self, mode: str, prediction_path: Path) -> str:
         suffix = "enhanced" if mode == "enhanced" else "standard"
@@ -679,6 +844,13 @@ class BERTPipeline:
 
         for vat_value, count in vat_distribution.items():
             lines.append(f"- {vat_value}: {count}")
+
+        if hasattr(self, '_prod_metrics') and self._prod_metrics:
+            lines.append("")
+            lines.append("Иерархическая точность на Production-файле:")
+            lines.append(f"- Класс (XX): {self._prod_metrics['acc_class']:.4f}")
+            lines.append(f"- Группа (XX.XX): {self._prod_metrics['acc_group']:.4f}")
+            lines.append(f"- Полный код: {self._prod_metrics['acc_full']:.4f}")
 
         if metrics:
             lines.append("")
