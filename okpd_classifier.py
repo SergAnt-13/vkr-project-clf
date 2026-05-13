@@ -219,7 +219,9 @@ class OKPDClassifier:
             "accuracy": accuracy,
             "f1_macro": f1_macro,
             "f1_weighted": f1_weighted,
-            "classification_report": report
+            "classification_report": report,
+            "y_true": y_true.tolist(),
+            "y_pred": y_pred.tolist()
         }
 
         return metrics

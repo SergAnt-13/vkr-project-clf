@@ -107,19 +107,19 @@
 
 ## === Прогон моделей на реальных данных ===
 
-### 4. Baseline на всей товарной номенклатуре
+### 1. Baseline на всей товарной номенклатуре
 
 ```bash
-.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
+.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx"
 ```
 
-### 5. BERT на всей товарной номенклатуре (дообучение при наличии файла)
+### 2. BERT на всей товарной номенклатуре (дообучение при наличии файла)
 
 ```bash
-.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
+.\.venv\Scripts\python cli.py bert --mode enhanced
 ```
 
-### 6. Интерактивный запуск
+### 3. Интерактивный запуск
 
 ```bash
 .\.venv\Scripts\python run.py

@@ -61,6 +61,9 @@ class BERTOKPDClassifier:
         self.id_to_label = {}
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.is_trained = False
+        self.test_texts = None
+        self.test_labels = None
+        self.temperature = 1.0
         pattern = getattr(self.config, "OKPD2_PATTERN", r"^\d{2}\.\d{2}(?:\.\d{2}){0,2}(?:\.\d{3})?$")
         self.code_pattern = re.compile(pattern)
         
@@ -183,7 +186,11 @@ class BERTOKPDClassifier:
         train_texts, test_texts, train_labels, test_labels = train_test_split(
             texts, labels, test_size=test_size, random_state=42, stratify=labels
         )
-        
+
+        # Сохраняем тестовые данные для последующей оценки иерархии и уверенности
+        self.test_texts = test_texts
+        self.test_labels = test_labels
+
         logger.info(f"Разделение данных: train={len(train_texts)}, test={len(test_texts)}")
         
         # Создание датасетов
@@ -201,7 +208,9 @@ class BERTOKPDClassifier:
         # Обучение
         self.model.train()
         best_f1 = 0.0
-        
+        patience_counter = 0
+        early_stop_patience = 3  # ждём 3 эпохи без улучшений
+
         for epoch in range(num_epochs):
             total_loss = 0
             for batch_idx, batch in enumerate(train_loader):
@@ -232,7 +241,15 @@ class BERTOKPDClassifier:
             if metrics['weighted_f1'] > best_f1:
                 best_f1 = metrics['weighted_f1']
                 self.save_model(save_path)
-                logger.info(f"Новая лучшая модель сохранена (F1 weighted: {metrics['weighted_f1']:.3f})")
+                logger.info(f"Новая лучшая модель сохранена (F1 weighted: {best_f1:.4f})")
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                logger.info(f"F1 не улучшилась {patience_counter}/{early_stop_patience}")
+
+            if patience_counter >= early_stop_patience:
+                logger.info(f"Ранняя остановка на эпохе {epoch + 1}")
+                break
         
         # Финальная оценка
         final_metrics = self._evaluate_model(test_loader)
@@ -298,9 +315,24 @@ class BERTOKPDClassifier:
             "accuracy": accuracy,
             "weighted_f1": float(report_dict['weighted avg']['f1-score']),
             "macro_f1": float(report_dict['macro avg']['f1-score']),
-            "classification_report": report_dict
+            "classification_report": report_dict,
+            "y_true": all_labels,
+            "y_pred": all_preds
         }
-    
+
+    def set_temperature(self, temperature: float = 2.0):
+        """Установить температурный коэффициент для калибровки уверенности."""
+        self.temperature = temperature
+        logger.info(f"Температура softmax установлена: {self.temperature}")
+
+    def get_test_predictions(self) -> Tuple[List[str], List[str], List[float]]:
+        """Возвращает истинные метки, предсказанные коды и уверенности для тестовой выборки."""
+        if not self.is_trained or self.test_texts is None:
+            raise ValueError("Модель не обучена или тестовые данные отсутствуют.")
+        pred_codes, confidences = self.predict(self.test_texts)
+        true_codes = [self.id_to_label[l] for l in self.test_labels]
+        return true_codes, pred_codes, confidences
+
     def predict(self, texts: List[str], batch_size: int = 32) -> Tuple[List[str], List[float]]:
         """Предсказание кодов ОКПД2"""
         
@@ -326,7 +358,8 @@ class BERTOKPDClassifier:
                 logits = outputs.logits
                 
                 # Получение предсказаний и уверенности
-                probs = torch.softmax(logits, dim=-1)
+                temp = getattr(self, 'temperature', 1.0)
+                probs = torch.softmax(logits / temp, dim=-1)
                 max_probs, predicted_ids = torch.max(probs, dim=-1)
                 
                 # Конвертация в коды ОКПД2
@@ -339,7 +372,7 @@ class BERTOKPDClassifier:
                         confidences.append(0.0)
         
         return predictions, confidences
-    
+
     def predict_dataframe(self, df: pd.DataFrame, text_column: str = "name_norm") -> pd.DataFrame:
         """Предсказание для DataFrame"""
         
@@ -351,7 +384,8 @@ class BERTOKPDClassifier:
         result_df['conf'] = confidences
         
         return result_df
-    
+
+
     def save_model(self, save_path: str = "./bert_model"):
         """Сохранение обученной модели"""
         
@@ -397,7 +431,7 @@ class BERTOKPDClassifier:
         
         self.is_trained = True
         logger.info(f"Модель загружена из {load_path}")
-    
+
     def get_model_info(self) -> Dict:
         """Получение информации о модели"""
         
