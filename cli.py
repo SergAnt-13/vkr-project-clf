@@ -97,6 +97,11 @@ def add_common_dataset_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Ограничить количество строк в обучающем файле.",
     )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Обучить и оценить модель на отложенной части тренировочных данных (без предсказаний на основном файле).",
+    )
 
 
 def command_inspect_data(_: argparse.Namespace) -> int:
@@ -136,18 +141,20 @@ def command_inspect_data(_: argparse.Namespace) -> int:
 def command_baseline(args: argparse.Namespace) -> int:
     pipeline = BaselinePipeline(config)
     result = pipeline.run(
-        prediction_file=args.prediction_file,
+        prediction_file=args.prediction_file if not args.validate else None,
         training_file=args.training_file,
         output_dir=args.output_dir,
         max_rows=args.max_rows,
         training_max_rows=args.training_max_rows,
+        validate=args.validate,
     )
 
     print("Базовый пайплайн завершен.")
-    print(f"Файл для предсказаний: {result['prediction_source']}")
-    print(f"Файл для обучения: {result['training_source']}")
-    for name, path in result["saved_files"].items():
-        print(f"{name}: {path}")
+    if not args.validate:
+        print(f"Файл для предсказаний: {result['prediction_source']}")
+        print(f"Файл для обучения: {result['training_source']}")
+        for name, path in result["saved_files"].items():
+            print(f"{name}: {path}")
     return 0
 
 
@@ -155,21 +162,23 @@ def command_bert(args: argparse.Namespace) -> int:
     pipeline = BERTPipeline(config)
     result = pipeline.run(
         mode=args.mode,
-        prediction_file=args.prediction_file,
+        prediction_file=args.prediction_file if not args.validate else None,
         training_file=args.training_file,
         output_dir=args.output_dir,
         model_dir=args.model_dir,
-        load_existing_model=args.load_existing_model,
+        load_existing_model=args.load_existing_model and not args.validate,
         max_rows=args.max_rows,
         training_max_rows=args.training_max_rows,
+        validate=args.validate,
     )
 
     print("BERT пайплайн завершен.")
-    print(f"Файл для предсказаний: {result['prediction_source']}")
-    print(f"Файл для обучения: {result['training_source']}")
-    print(f"Каталог модели: {result['model_dir']}")
-    print(f"Результат: {result['output_file']}")
-    print(f"Отчет: {result['report_file']}")
+    if not args.validate:
+        print(f"Файл для предсказаний: {result['prediction_source']}")
+        print(f"Файл для обучения: {result['training_source']}")
+        print(f"Каталог модели: {result['model_dir']}")
+        print(f"Результат: {result['output_file']}")
+        print(f"Отчет: {result['report_file']}")
     return 0
 
 

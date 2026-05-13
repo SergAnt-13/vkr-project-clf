@@ -85,7 +85,7 @@
 
 Это особенно важно для вашего сценария с новым почти корректным размеченным файлом на `1500-2000` строк.
 
-## Как запускать
+## === Запуск и тест метрик ===
 
 ### 1. Проверить, что проект видит
 
@@ -93,34 +93,36 @@
 ./.venv/Scripts/python cli.py inspect-data
 ```
 
-### 2. Безопасный быстрый тест baseline
+### 2. Тест Baseline для метрик
 
 ```bash
-./.venv/Scripts/python cli.py baseline --max-rows 500
+.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
 ```
 
-### 2.1. Безопасный быстрый тест baseline + дообучение
+### 3. Тест BERT для метрик (дообучение при наличии файла)
 
 ```bash
-.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx"
+.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
 ```
 
-### 3. Полный baseline
+## === Прогон моделей на реальных данных ===
+
+### 4. Baseline на всей товарной номенклатуре
 
 ```bash
-./.venv/Scripts/python cli.py baseline
+.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
 ```
 
-### 4. BERT на встроенных данных (дообучение при наличии файла)
+### 5. BERT на всей товарной номенклатуре (дообучение при наличии файла)
 
 ```bash
-.\.venv\Scripts\python cli.py bert ` --mode enhanced
+.\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
 ```
 
-### 5. Интерактивный запуск
+### 6. Интерактивный запуск
 
 ```bash
-./.venv/Scripts/python run.py
+.\.venv\Scripts\python run.py
 ```
 
 ## Куда сохраняются результаты

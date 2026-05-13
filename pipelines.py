@@ -43,6 +43,7 @@ class BaselinePipeline:
         output_dir: Optional[Path] = None,
         max_rows: Optional[int] = None,
         training_max_rows: Optional[int] = None,
+        validate: bool = False,
     ) -> Dict[str, object]:
         runtime = self._runtime_config(output_dir)
         loader = DataLoader(runtime)
@@ -76,8 +77,60 @@ class BaselinePipeline:
                     break
 
         labeled_df, _ = classifier.split_labeled_unlabeled(training_df)
-        classifier.fit(labeled_df, text_column="name_norm")
 
+        if validate:
+            # === ЧЕСТНАЯ ВАЛИДАЦИЯ: train/test split с учётом редких классов ===
+            from sklearn.model_selection import train_test_split
+
+            # Находим классы, у которых меньше 2 примеров (их нельзя стратифицировать)
+            class_counts = labeled_df['okpd2_current'].value_counts()
+            rare_classes = class_counts[class_counts < 2].index.tolist()
+
+            # Отделяем редкие классы (они пойдут только в обучение)
+            rare_mask = labeled_df['okpd2_current'].isin(rare_classes)
+            rare_df = labeled_df[rare_mask].copy()
+            rest_df = labeled_df[~rare_mask].copy()
+
+            # Разбиваем остальные данные со стратификацией
+            if len(rest_df) > 0:
+                train_rest, test_df = train_test_split(
+                    rest_df, test_size=0.2, random_state=42,
+                    stratify=rest_df['okpd2_current']
+                )
+                train_df = pd.concat([train_rest, rare_df], ignore_index=True)
+            else:
+                logger.warning("Все классы имеют менее 2 примеров, валидация невозможна.")
+                return {"metrics": {"accuracy": 0, "f1_macro": 0, "f1_weighted": 0}, "validation": True}
+
+            classifier.fit(train_df, text_column="name_norm")
+            eval_metrics = classifier.evaluate(test_df, text_column="name_norm")
+
+            # Вывод в консоль
+            logger.info("=== ЧЕСТНЫЕ МЕТРИКИ НА ОТЛОЖЕННОЙ ВЫБОРКЕ (Baseline) ===")
+            logger.info(f"Accuracy: {eval_metrics['accuracy']:.4f}")
+            logger.info(f"F1 (macro): {eval_metrics['f1_macro']:.4f}")
+            logger.info(f"F1 (weighted): {eval_metrics['f1_weighted']:.4f}")
+
+            # Сохранение отчёта в файл
+            report_lines = [
+                "=== ВАЛИДАЦИОННЫЙ ОТЧЁТ (Baseline) ===",
+                f"Дата: {pd.Timestamp.now()}",
+                f"Обучающая выборка: {len(train_df)} записей",
+                f"Тестовая выборка: {len(test_df)} записей",
+                "",
+                "Метрики на тестовой выборке:",
+                f"Accuracy (Точность): {eval_metrics['accuracy']:.4f}",
+                f"F1 (макро): {eval_metrics['f1_macro']:.4f}",
+                f"F1 (взвешенная): {eval_metrics['f1_weighted']:.4f}",
+            ]
+            report_path = runtime.OUTPUT_DIR / "validation_report_baseline.txt"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text("\n".join(report_lines), encoding="utf-8")
+            logger.info(f"Валидационный отчёт сохранён: {report_path}")
+
+            return {"metrics": eval_metrics, "validation": True, "report_path": report_path}
+
+        classifier.fit(labeled_df, text_column="name_norm")
         predictions_df = classifier.predict(prediction_df, text_column="name_norm")
 
         result_df = prediction_df.merge(predictions_df, on="item_id", how="left")
@@ -173,6 +226,7 @@ class BERTPipeline:
         load_existing_model: bool = False,
         max_rows: Optional[int] = None,
         training_max_rows: Optional[int] = None,
+        validate: bool = False,
     ) -> Dict[str, object]:
         runtime = self._runtime_config(output_dir, model_dir)
         loader = DataLoader(runtime)
@@ -197,6 +251,42 @@ class BERTPipeline:
         prediction_df["name_norm"] = text_processor.normalize_text_series(prediction_df["name_raw"])
         training_df["name_norm"] = text_processor.normalize_text_series(training_df["name_raw"])
         training_df = training_df[training_df["name_norm"].astype(str).str.len() > 0].copy()
+
+        if validate:
+            # ЧЕСТНАЯ ВАЛИДАЦИЯ – только обучение и метрики на внутреннем тесте
+            fit_kwargs = self._bert_fit_kwargs(runtime, mode)
+            metrics = classifier.fit(
+                training_df,
+                text_column="name_norm",
+                label_column=label_column,
+                save_path=str(runtime.MODEL_DIR) if not load_existing_model else None,
+                **fit_kwargs,
+            )
+            # Вывод в консоль
+            logger.info("=== ЧЕСТНЫЕ МЕТРИКИ НА ТЕСТОВОЙ ВЫБОРКЕ (BERT) ===")
+            logger.info(f"Accuracy: {metrics.get('accuracy', 0):.4f}")
+            logger.info(f"F1 (weighted): {metrics.get('weighted_f1', 0):.4f}")
+            logger.info(f"F1 (macro): {metrics.get('macro_f1', 0):.4f}")
+
+            # Сохранение отчёта в файл
+            report_lines = [
+                "=== ВАЛИДАЦИОННЫЙ ОТЧЁТ (BERT) ===",
+                f"Дата: {pd.Timestamp.now()}",
+                f"Режим: {mode}",
+                f"Количество классов: {metrics.get('num_classes', '?')}",
+                f"Примеров всего: {metrics.get('num_samples', '?')}",
+                "",
+                "Метрики на тестовой выборке:",
+                f"Accuracy (Точность): {metrics.get('accuracy', 0):.4f}",
+                f"F1 (взвешенная): {metrics.get('weighted_f1', 0):.4f}",
+                f"F1 (макро): {metrics.get('macro_f1', 0):.4f}",
+            ]
+            report_path = runtime.OUTPUT_DIR / "validation_report_bert.txt"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text("\n".join(report_lines), encoding="utf-8")
+            logger.info(f"Валидационный отчёт сохранён: {report_path}")
+
+            return {"metrics": metrics, "validation": True, "report_path": report_path}
 
         if load_existing_model:
             classifier.load_model(runtime.MODEL_DIR)
@@ -277,7 +367,7 @@ class BERTPipeline:
     ):
         if training_file:
             training_path = Path(training_file)
-            training_df = loader.load_training_data(training_path, max_rows=training_max_rows)
+            training_df = loader.load_merged_products(training_path, max_rows=training_max_rows)
         elif mode == "enhanced" and self.config.MERGED_PRODUCTS_FILE.exists():
             training_path = self.config.MERGED_PRODUCTS_FILE
             training_df = loader.load_merged_products(training_path, max_rows=training_max_rows)
