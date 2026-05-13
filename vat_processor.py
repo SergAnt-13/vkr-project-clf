@@ -4,6 +4,7 @@
 import re
 import logging
 from typing import Set, List
+import pandas as pd
 from config import config
 
 
@@ -110,38 +111,48 @@ class VATProcessor:
             if prefix in self.vat10_prefixes:
                 return "НДС10"
         
-        # Если не найден в префиксах НДС 10%, то НДС 20%
-        return "НДС20"
-    
+        # Если не найден в префиксах НДС 10%, то НДС 22%
+        return "НДС22"
+
     def process_vat_predictions(self, df, okpd_column: str = "okpd2_final") -> List[str]:
         """Обработать предсказания НДС для DataFrame"""
         logger.info(f"Обработка предсказаний НДС для {len(df)} записей")
-        
+
         vat_predictions = []
         for okpd_code in df[okpd_column]:
             vat_rate = self.determine_vat_rate(okpd_code)
             vat_predictions.append(vat_rate)
-        
+
+        # Очистка устаревших и некорректных ставок
+        def clean_vat(vat_value):
+            if pd.isna(vat_value) or str(vat_value).strip().lower() in ('', 'nan', 'ндс0', 'ндс12', 'ндс18'):
+                return 'НДС22'
+            if str(vat_value).strip() == 'НДС20':
+                return 'НДС22'
+            return str(vat_value).strip()
+
+        vat_predictions = [clean_vat(v) for v in vat_predictions]
+
         valid_predictions = sum(1 for vat in vat_predictions if vat != "")
         logger.info(f"Получено {valid_predictions} валидных предсказаний НДС")
-        
+
         return vat_predictions
     
     def get_vat_statistics(self, vat_predictions: List[str]) -> dict:
         """Получить статистику по предсказаниям НДС"""
         total = len(vat_predictions)
         vat10_count = sum(1 for vat in vat_predictions if vat == "НДС10")
-        vat20_count = sum(1 for vat in vat_predictions if vat == "НДС20")
+        vat22_count = sum(1 for vat in vat_predictions if vat == "НДС22")
         empty_count = sum(1 for vat in vat_predictions if vat == "")
         
         stats = {
             'total_predictions': total,
             'vat10_count': vat10_count,
-            'vat20_count': vat20_count,
+            'vat22_count': vat22_count,
             'empty_count': empty_count,
             'vat10_rate': vat10_count / total if total > 0 else 0,
-            'vat20_rate': vat20_count / total if total > 0 else 0,
-            'coverage_rate': (vat10_count + vat20_count) / total if total > 0 else 0
+            'vat22_rate': vat22_count / total if total > 0 else 0,
+            'coverage_rate': (vat10_count + vat22_count) / total if total > 0 else 0
         }
         
         return stats

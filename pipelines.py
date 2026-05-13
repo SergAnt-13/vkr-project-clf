@@ -333,11 +333,21 @@ class BERTPipeline:
         runtime = self._runtime_config(output_dir, model_dir)
         loader = DataLoader(runtime)
         vat_processor = VATProcessor(runtime)
+        output_manager = OutputManager(runtime)
         classifier = BERTOKPDClassifier(runtime, model_name=runtime.BERT_MODEL_NAME)
 
-        prediction_path = self._resolve_prediction_source(runtime, mode, prediction_file)
+
+        # Если prediction_file передан явно – используем его,
+        # иначе для обычного режима всегда берём основной файл (to_process)
+        if prediction_file:
+            prediction_path = Path(prediction_file)
+        else:
+            prediction_path = runtime.PRODUCTS_FILE  # <-- ~52К записей
         prediction_raw = loader.read_table(prediction_path)
         prediction_df = loader.standardize_products(prediction_raw, max_rows=max_rows)
+
+        prediction_df["okpd2_current"] = prediction_raw.get("Код ОКПД2", pd.Series(dtype=str)).astype(str).str.strip()
+        prediction_df["vat_current"] = prediction_raw.get("Ставка НДС (Заказ)", pd.Series(dtype=str)).astype(str).str.strip()
 
         training_df, training_path, label_column = self._resolve_training_source(
             loader=loader,
@@ -366,7 +376,7 @@ class BERTPipeline:
             )
 
             # Получаем предсказания на тестовой выборке, которую BERT сохранил внутри
-            classifier.set_temperature(2.0)
+            1
             y_true, y_pred_str, confidences = classifier.get_test_predictions()
             y_true_series = pd.Series(y_true)
             y_pred_series = pd.Series(y_pred_str)
@@ -482,7 +492,7 @@ class BERTPipeline:
                 **fit_kwargs,
             )
 
-        classifier.set_temperature(2.0)
+        classifier.set_temperature(1.0)
         predictions_df = classifier.predict_dataframe(prediction_df, text_column="name_norm")
         predictions_df["okpd2_final"] = predictions_df.apply(self._choose_final_okpd, axis=1)
 
@@ -492,6 +502,14 @@ class BERTPipeline:
 
         predictions_df["vat_pred"] = vat_processor.process_vat_predictions(predictions_df, "okpd2_final")
         predictions_df["vat_final"] = predictions_df.apply(self._choose_final_vat, axis=1)
+
+        # === Формирование таблиц анализа (как в Baseline) ===
+        if "okpd2_current" in predictions_df.columns and "vat_current" in predictions_df.columns:
+            predictions_df["okpd2_final"] = predictions_df.apply(self._choose_final_okpd, axis=1)
+            tables = output_manager.create_analysis_tables(predictions_df)
+            output_manager.save_tables(tables, predictions_df)
+        else:
+            logger.info("Нет эталонных кодов/ставок для сравнения — таблицы неверных не созданы.")
 
         result_output = prediction_raw.iloc[: len(predictions_df)].copy()
         result_output["Код ОКПД2 (предсказанный)"] = predictions_df["okpd2_pred"].values

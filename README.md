@@ -119,7 +119,31 @@
 .\.venv\Scripts\python cli.py bert --mode enhanced
 ```
 
-### 3. Интерактивный запуск
+### 3.1 Запуск BERT с расширенной обучающей выборкой (выполнять после п.2)
+
+```bash
+.\.venv\Scripts\python enrich_training.py
+```
+
+### 3.2 Переобучение BERT на расширенном файле
+
+```bash
+.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx"
+```
+
+### 3.3 Качество обучения на отложенной выборке
+
+```bash
+.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx" --validate --load-existing-model
+```
+
+### 3.4 Предсказание на большом файле
+```bash
+.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx" --load-existing-model
+```
+
+
+### 4. Интерактивный запуск
 
 ```bash
 .\.venv\Scripts\python run.py
