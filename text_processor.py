@@ -39,17 +39,22 @@ class TextProcessor:
         return unicodedata.normalize("NFC", text).translate(translator)
 
     def apply_abbreviations(self, text: str) -> str:
+        """Применить правила сокращений токен-за-токеном, чтобы избежать замен внутри слов."""
         if not self.abbreviation_rules:
             return text
-        result = text
-        for rule in self.abbreviation_rules:
-            pattern = rule['pattern']
-            replacement = rule['replacement']
-            try:
-                result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
-            except re.error:
-                continue
-        return result
+
+        tokens = re.findall(r'\b\w+(?:\.\w+)+\b|\b\w+\b|[^\w\s]', text)
+        result_tokens = []
+        for token in tokens:
+            token_lower = token.lower().strip('.')
+            replaced = None
+            for rule in self.abbreviation_rules:
+                pattern = rule['pattern'].lower().strip('.')
+                if token_lower == pattern:
+                    replaced = rule['replacement']
+                    break
+            result_tokens.append(replaced if replaced else token)
+        return ' '.join(result_tokens)
     
     def clean_weights_and_measures(self, text: str) -> str:
         """Удалить упоминания весов и мер из текста"""

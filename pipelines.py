@@ -230,8 +230,6 @@ class BaselinePipeline:
             return {"metrics": {"accuracy": accuracy, "f1_macro": f1_macro, "f1_weighted": f1_weighted},
                     "validation": True}
 
-            return {"metrics": eval_metrics, "validation": True, "report_path": report_path}
-
         classifier.fit(labeled_df, text_column="name_norm")
         predictions_df = classifier.predict(prediction_df, text_column="name_norm")
 
@@ -364,6 +362,10 @@ class BERTPipeline:
         )
 
         abbreviation_rules = loader.load_abbreviations()
+        abbreviation_rules = loader.load_abbreviations()
+        logger.info(f"Загружено правил: {len(abbreviation_rules)}")
+        for rule in abbreviation_rules[:5]:
+            logger.info(f"  pattern='{rule['pattern']}', replacement='{rule['replacement']}', okpd_codes='{rule['okpd_codes']}'")
         self.abbreviation_rules = abbreviation_rules
         text_processor = TextProcessor(abbreviation_rules=abbreviation_rules, config_obj=runtime)
 
@@ -764,23 +766,49 @@ class BERTPipeline:
         return 'НДС22'
 
     def apply_domain_boosting(self, predictions_df: pd.DataFrame, text_column: str = "name_norm") -> pd.DataFrame:
-        if not hasattr(self, 'abbreviation_rules'):
-            logger.warning("Правила сокращений не загружены, доменный бустинг пропущен")
+        """
+        Повысить уверенность и скорректировать предсказания на основе ключевых слов из сокращений
+        и связанных с ними кодов ОКПД2.
+        """
+        import pandas as pd
+        abbrev_path = self.config.ABBREVIATIONS_FILE
+        if not abbrev_path.exists():
+            logger.warning(f"Файл сокращений не найден: {abbrev_path}")
             return predictions_df
+
+        df = pd.read_excel(abbrev_path)
+        # Ищем колонку с кодами
+        okpd_col = None
+        for name in ['okpd_codes', 'okpd', 'codes']:
+            if name in df.columns:
+                okpd_col = name
+                break
+        if okpd_col is None:
+            okpd_col = df.columns[-1]  # последняя колонка
+
+        # Собираем правила в словарь: расшифровка -> список кодов
+        rules_dict = {}
+        for _, row in df.iterrows():
+            keyword = str(row.get('expansion', '')).strip().lower()
+            okpd_codes_str = str(row[okpd_col]).strip()
+            if not keyword or not okpd_codes_str or okpd_codes_str.lower() == 'nan':
+                continue
+            possible_codes = [c.strip() for c in okpd_codes_str.split(';') if c.strip()]
+            if possible_codes:
+                rules_dict[keyword] = possible_codes
+
+        logger.info(f"Загружено {len(rules_dict)} правил для доменного бустинга")
+        # Отладочный вывод первых 3 правил
+        sample = list(rules_dict.items())[:3]
+        for kw, codes in sample:
+            logger.info(f"  '{kw}' -> {codes}")
 
         boosted = 0
         corrected = 0
         for idx, row in predictions_df.iterrows():
             text = str(row.get(text_column, '')).lower()
-            for rule in self.abbreviation_rules:
-                keyword = rule['replacement'].lower()
-                okpd_codes_str = rule.get('okpd_codes', '')
-                if not keyword or not okpd_codes_str:
-                    continue
+            for keyword, possible_codes in rules_dict.items():
                 if keyword in text:
-                    possible_codes = [c.strip() for c in okpd_codes_str.split(';') if c.strip()]
-                    if not possible_codes:
-                        continue
                     if row['okpd2_pred'] in possible_codes:
                         predictions_df.at[idx, 'conf'] = 0.99
                         boosted += 1
@@ -788,7 +816,7 @@ class BERTPipeline:
                         predictions_df.at[idx, 'okpd2_pred'] = possible_codes[0]
                         predictions_df.at[idx, 'conf'] = 0.9
                         corrected += 1
-                    break
+                    break  # только первое совпадение
         logger.info(f"Доменный бустинг: повышена уверенность у {boosted} записей, исправлен код у {corrected}")
         return predictions_df
 

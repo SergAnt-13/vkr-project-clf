@@ -176,13 +176,26 @@ class DataLoader:
             logger.warning(f"Файл сокращений не найден: {abbrev_path}")
             return []
         df = pd.read_excel(abbrev_path)
+
+        # Поиск колонок по именам или позициям
+        pattern_col = 'abbr' if 'abbr' in df.columns else df.columns[0]
+        repl_col = 'expansion' if 'expansion' in df.columns else df.columns[1]
+        # Ищем колонку с кодами: пробуем разные варианты
+        okpd_col = None
+        for name in ['okpd_codes', 'okpd', 'codes']:
+            if name in df.columns:
+                okpd_col = name
+                break
+        if okpd_col is None:
+            # Если не нашли по имени, пробуем взять последнюю колонку (куда добавили коды)
+            okpd_col = df.columns[-1]
+
         rules = []
         for _, row in df.iterrows():
-            # Ищем колонки по имени
-            pattern = str(row.get('abbr', row.iloc[0])).strip()
-            replacement = str(row.get('expansion', row.iloc[1] if len(row) > 1 else '')).strip()
-            okpd_codes = str(row.get('okpd_codes', '')).strip()
-            if not okpd_codes or okpd_codes == 'nan':
+            pattern = str(row[pattern_col]).strip()
+            replacement = str(row[repl_col]).strip()
+            okpd_codes = str(row[okpd_col]).strip() if okpd_col else ''
+            if not okpd_codes or okpd_codes.lower() == 'nan':
                 okpd_codes = ''
             rules.append({
                 'pattern': pattern,

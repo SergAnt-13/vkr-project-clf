@@ -87,19 +87,19 @@
 
 ## === Запуск и тест метрик ===
 
-### 1. Проверить, что проект видит
+### 1 Проверить, что проект видит
 
 ```bash
 ./.venv/Scripts/python cli.py inspect-data
 ```
 
-### 2. Тест Baseline для метрик
+### 2 Тест Baseline для метрик
 
 ```bash
 .\.venv\Scripts\python cli.py baseline --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
 ```
 
-### 3. Тест BERT для метрик (дообучение при наличии файла)
+### 3 Тест BERT для метрик (дообучение при наличии файла)
 
 ```bash
 .\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
@@ -121,15 +121,24 @@
 
 ### 3 BERT на расширенном enriched для обучения (3500 записей)
 ```bash
+.\.venv\Scripts\python enrich_training.py
+```
+```bash
 .\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx"
 ```
 
-### 4 Сравнение моделей
+### 4 Использование последней выполненной модели для предсказания
+```bash
+.\.venv\Scripts\python cli.py bert --mode enhanced --load-existing-model
+```
+
+
+### 5 Сравнение моделей
 ```bash
 .\.venv\Scripts\python compare_models.py
 ```
 
-### 5. Интерактивный запуск
+### 6 Интерактивный запуск
 
 ```bash
 .\.venv\Scripts\python run.py

@@ -67,16 +67,15 @@ def main():
     )
     print(f"Объединённых записей: {len(merged)}")
 
-    # === 5. Отбираем «подтверждённые» ===
-    confirmed = merged[
-        (merged['original_okpd'].astype(str).str.strip() == merged['okpd2_pred'].astype(str).str.strip()) &
-        (merged['conf'] > 0.8)
-    ].copy()
-    print(f"Подтверждённых записей (совпали коды и уверенность > 0.8): {len(confirmed)}")
+    # === 5. Отбираем высокоуверенные предсказания (с учётом бустинга) ===
+    # Берём все записи, где уверенность > 0.8, не требуя совпадения с исходным кодом.
+    # Это включает как старые подтверждённые, так и исправленные бустингом.
+    high_conf = merged[(merged['conf'] > 0.8) & merged['okpd2_pred'].notna()].copy()
+    print(f"Высокоуверенных предсказаний (conf > 0.8): {len(high_conf)}")
 
     # === 6. Добавляем их к проверенным ===
-    confirmed = confirmed[['name_raw', 'okpd2_pred']].rename(columns={'okpd2_pred': 'okpd2_current'})
-    enriched = pd.concat([labeled, confirmed], ignore_index=True)
+    high_conf = high_conf[['name_raw', 'okpd2_pred']].rename(columns={'okpd2_pred': 'okpd2_current'})
+    enriched = pd.concat([labeled, high_conf], ignore_index=True)
     enriched = enriched.drop_duplicates(subset=['name_raw'])
     print(f"Итоговый размер расширенной обучающей выборки: {len(enriched)}")
 
