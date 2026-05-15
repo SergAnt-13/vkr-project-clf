@@ -376,6 +376,9 @@ class BERTPipeline:
         if validate:
             # Честная валидация через внутренний split BERT
             fit_kwargs = self._bert_fit_kwargs(runtime, mode)
+            #classifier.use_small_loss = True
+            #classifier.small_loss_threshold = 3.86
+            #classifier.collect_loss_stats = True
             metrics = classifier.fit(
                 training_df,
                 text_column="name_norm",
@@ -385,7 +388,7 @@ class BERTPipeline:
             )
 
             # Получаем предсказания на тестовой выборке, которую BERT сохранил внутри
-            y_true, y_pred_str, confidences = classifier.get_test_predictions()
+            y_true, y_pred_str, confidences, entropies = classifier.get_test_predictions()
             y_true_series = pd.Series(y_true)
             y_pred_series = pd.Series(y_pred_str)
 
@@ -490,8 +493,11 @@ class BERTPipeline:
 
         if load_existing_model:
             classifier.load_model(runtime.MODEL_DIR)
+            #classifier.use_small_loss = True
+            #classifier.small_loss_threshold = 3.86
         else:
             fit_kwargs = self._bert_fit_kwargs(runtime, mode)
+            #classifier.collect_loss_stats = True
             bert_metrics = classifier.fit(
                 training_df,
                 text_column="name_norm",
