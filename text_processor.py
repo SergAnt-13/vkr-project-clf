@@ -49,12 +49,36 @@ class TextProcessor:
             token_lower = token.lower().strip('.')
             replaced = None
             for rule in self.abbreviation_rules:
-                pattern = rule['pattern'].lower().strip('.')
+                if isinstance(rule, dict):
+                    pattern = str(rule.get('pattern', '')).lower().strip('.')
+                    replacement = str(rule.get('replacement', ''))
+                else:
+                    pattern = str(rule[0]).lower().strip('.') if len(rule) > 0 else ''
+                    replacement = str(rule[1]) if len(rule) > 1 else ''
                 if token_lower == pattern:
-                    replaced = rule['replacement']
+                    replaced = replacement
                     break
             result_tokens.append(replaced if replaced else token)
         return ' '.join(result_tokens)
+
+    def normalize_text_light(self, text: str) -> str:
+        """Легкая нормализация для semantic pipeline: сохраняет предлоги и порядок слов."""
+        if pd.isna(text) or text is None:
+            return ""
+
+        text = str(text).strip().lower()
+        if not text:
+            return ""
+
+        text = self.replace_lookalikes(text)
+        if self.abbreviation_rules:
+            text = self.apply_abbreviations(text)
+        text = self.whitespace_pattern.sub(" ", text)
+        return text.strip()
+
+    def normalize_text_light_series(self, series: pd.Series) -> pd.Series:
+        logger.info(f"Легкая нормализация {len(series)} текстов")
+        return series.apply(self.normalize_text_light)
     
     def clean_weights_and_measures(self, text: str) -> str:
         """Удалить упоминания весов и мер из текста"""

@@ -27,13 +27,17 @@ class Config:
     ABBREVIATIONS_FILE: Path = field(init=False)
     PP908_FILE: Path = field(init=False)
     VAT_REFERENCE_FILE: Path = field(init=False)
+    OKPD2_REFERENCE_FILE: Path = field(init=False)
 
     # Артефакты и выходы
     OUTPUT_DIR: Path = field(init=False)
     BASELINE_OUTPUT_DIR: Path = field(init=False)
     BERT_OUTPUT_DIR: Path = field(init=False)
+    SEMANTIC_OUTPUT_DIR: Path = field(init=False)
     ARTIFACTS_DIR: Path = field(init=False)
     MODEL_DIR: Path = field(init=False)
+    FAISS_DIR: Path = field(init=False)
+    SBERT_FINETUNED_DIR: Path = field(init=False)
     REPORTS_DIR: Path = field(init=False)
 
     # Параметры обработки данных
@@ -63,6 +67,15 @@ class Config:
     BERT_LEARNING_RATE: float = 2e-5
     BERT_MIN_SAMPLES_PER_CLASS_STANDARD: int = 10
     BERT_MIN_SAMPLES_PER_CLASS_ENHANCED: int = 5
+
+    # Параметры семантического поиска
+    SEMANTIC_BI_ENCODER_MODEL: str = "sberbank-ai/sbert_large_nlu_ru"
+    SEMANTIC_CROSS_ENCODER_MODEL: str = "DiTy/cross-encoder-russian-msmarco"
+    SEMANTIC_TOP_K: int = 50
+    SEMANTIC_TOP_N_OUTPUT: int = 3
+    SEMANTIC_BATCH_SIZE: int = 32
+    SEMANTIC_CONFIDENT_THRESHOLD: float = 0.80
+    SEMANTIC_UNCERTAIN_THRESHOLD: float = 0.40
 
     # Регулярное выражение для валидации кодов ОКПД2
     OKPD2_PATTERN: str = r"^\d{2}\.\d{2}(?:\.\d{2}){0,2}(?:\.\d{3})?$"
@@ -155,12 +168,16 @@ class Config:
             / "Постановление Правительства РФ от 31.12.2004 N 908 Об утверждении перечней кодов видов.rtf"
         )
         self.VAT_REFERENCE_FILE = self.REFERENCE_DIR / "Товары ставка 10%.xlsx"
+        self.OKPD2_REFERENCE_FILE = self.REFERENCE_DIR / "okpd2_classifier.xlsx"
 
         self.OUTPUT_DIR = self.RESULTS_DIR
         self.BASELINE_OUTPUT_DIR = self.OUTPUT_DIR / "baseline"
         self.BERT_OUTPUT_DIR = self.OUTPUT_DIR / "bert"
+        self.SEMANTIC_OUTPUT_DIR = self.OUTPUT_DIR / "semantic"
         self.ARTIFACTS_DIR = self.BASE_DIR / "artifacts"
         self.MODEL_DIR = self.ARTIFACTS_DIR / "models" / "bert_okpd"
+        self.FAISS_DIR = self.ARTIFACTS_DIR / "faiss"
+        self.SBERT_FINETUNED_DIR = self.ARTIFACTS_DIR / "models" / "sbert_finetuned"
         self.REPORTS_DIR = self.ARTIFACTS_DIR / "reports"
 
 

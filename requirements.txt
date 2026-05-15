@@ -9,3 +9,12 @@ torch>=2.0.0
 transformers>=4.30.0
 tokenizers>=0.13.0
 datasets>=2.12.0
+
+# Semantic search pipeline
+sentence-transformers>=2.7.0
+faiss-cpu>=1.8.0
+tqdm>=4.66.0
+matplotlib>=3.7.0
+seaborn>=0.13.0
+striprtf>=0.0.26
+pytest>=8.0.0

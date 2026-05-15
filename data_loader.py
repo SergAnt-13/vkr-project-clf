@@ -17,6 +17,15 @@ from striprtf.striprtf import rtf_to_text
 logger = logging.getLogger(__name__)
 
 
+class AbbreviationRule(dict):
+    """Dictionary rule that remains comparable with the legacy tuple contract."""
+
+    def __eq__(self, other):
+        if isinstance(other, tuple) and len(other) == 2:
+            return (self.get("pattern"), self.get("replacement")) == other
+        return super().__eq__(other)
+
+
 class DataLoader:
     """Загрузка Excel/CSV-файлов и приведение к общей схеме колонок."""
 
@@ -177,9 +186,16 @@ class DataLoader:
             return []
         df = pd.read_excel(abbrev_path)
 
+        if len(df.columns) == 1 and ";" in str(df.columns[0]):
+            header = [part.strip() for part in str(df.columns[0]).split(";")]
+            split_rows = df.iloc[:, 0].astype(str).str.split(";", expand=True)
+            split_rows = split_rows.iloc[:, : len(header)]
+            split_rows.columns = header
+            df = split_rows
+
         # Поиск колонок по именам или позициям
         pattern_col = 'abbr' if 'abbr' in df.columns else df.columns[0]
-        repl_col = 'expansion' if 'expansion' in df.columns else df.columns[1]
+        repl_col = 'expansion' if 'expansion' in df.columns else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
         # Ищем колонку с кодами: пробуем разные варианты
         okpd_col = None
         for name in ['okpd_codes', 'okpd', 'codes']:
@@ -192,16 +208,16 @@ class DataLoader:
 
         rules = []
         for _, row in df.iterrows():
-            pattern = str(row[pattern_col]).strip()
+            pattern = self._normalize_abbreviation_pattern(row[pattern_col])
             replacement = str(row[repl_col]).strip()
             okpd_codes = str(row[okpd_col]).strip() if okpd_col else ''
             if not okpd_codes or okpd_codes.lower() == 'nan':
                 okpd_codes = ''
-            rules.append({
+            rules.append(AbbreviationRule({
                 'pattern': pattern,
                 'replacement': replacement,
                 'okpd_codes': okpd_codes
-            })
+            }))
         logger.info(f"Загружено {len(rules)} правил сокращений")
         return rules
 

@@ -10,6 +10,7 @@ from typing import Iterable, Optional
 from config import config
 from data_loader import DataLoader
 from pipelines import BERTPipeline, BaselinePipeline
+from semantic_pipeline import SemanticPipeline
 
 
 logging.basicConfig(
@@ -46,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_dataset_args(bert_parser)
     bert_parser.add_argument(
         "--mode",
-        choices=["standard", "enhanced"],
+        choices=["standard", "enhanced", "semantic"],
         default="enhanced",
         help="enhanced = пытаться учиться на эталонных метках из merged-файла.",
     )
@@ -60,6 +61,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--load-existing-model",
         action="store_true",
         help="Не обучать заново, а загрузить уже сохраненную модель.",
+    )
+    bert_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Process only first N products in semantic mode.",
+    )
+    bert_parser.add_argument(
+        "--skip-semantic-finetune",
+        action="store_true",
+        help="Skip optional bi-encoder fine-tuning in semantic mode.",
     )
     bert_parser.set_defaults(func=command_bert)
 
@@ -159,6 +171,24 @@ def command_baseline(args: argparse.Namespace) -> int:
 
 
 def command_bert(args: argparse.Namespace) -> int:
+    if args.mode == "semantic":
+        pipeline = SemanticPipeline(config)
+        result = pipeline.run(
+            prediction_file=args.prediction_file,
+            training_file=args.training_file,
+            output_dir=args.output_dir,
+            max_rows=args.max_rows,
+            training_max_rows=args.training_max_rows,
+            limit=args.limit,
+            fine_tune=not args.skip_semantic_finetune,
+        )
+
+        print("Semantic pipeline completed.")
+        print(f"Prediction file: {result['prediction_source']}")
+        print(f"Training file: {result['training_source']}")
+        print(f"Result: {result['output_file']}")
+        return 0
+
     pipeline = BERTPipeline(config)
     result = pipeline.run(
         mode=args.mode,
