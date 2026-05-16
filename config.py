@@ -59,9 +59,9 @@ class Config:
     BERT_TEST_SIZE_STANDARD: float = 0.20
     BERT_TEST_SIZE_ENHANCED: float = 0.10
     BERT_MAX_LENGTH_STANDARD: int = 64
-    BERT_MAX_LENGTH_ENHANCED: int = 128
+    BERT_MAX_LENGTH_ENHANCED: int = 96
     BERT_BATCH_SIZE_STANDARD: int = 8
-    BERT_BATCH_SIZE_ENHANCED: int = 16
+    BERT_BATCH_SIZE_ENHANCED: int = 32
     BERT_NUM_EPOCHS_STANDARD: int = 3
     BERT_NUM_EPOCHS_ENHANCED: int = 13
     BERT_LEARNING_RATE: float = 2e-5
@@ -76,6 +76,7 @@ class Config:
     SEMANTIC_BATCH_SIZE: int = 32
     SEMANTIC_CONFIDENT_THRESHOLD: float = 0.80
     SEMANTIC_UNCERTAIN_THRESHOLD: float = 0.40
+    SEMANTIC_BI_ENCODER_EPOCHS: int = 7
 
     # Список токенов, которые нужно полностью удалять из названий товаров (бренды, мусор)
     IGNORE_TOKENS: List[str] = field(

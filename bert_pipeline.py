@@ -11,6 +11,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+from hierarchical_semantic_pipeline import HierarchicalSemanticPipeline
 
 from bert_okpd_classifier import BERTOKPDClassifier
 from config import config
@@ -31,6 +32,7 @@ class BERTPipeline:
 
     def __init__(self, config_obj=None):
         self.config = config_obj or config
+        self.hierarchical_semantic = None
 
     def _runtime_config(
             self,
@@ -49,6 +51,15 @@ class BERTPipeline:
         runtime.REPORTS_DIR.mkdir(parents=True, exist_ok=True)
         runtime.MODEL_DIR.mkdir(parents=True, exist_ok=True)
         return runtime
+
+    def _get_semantic_second_opinion(self, product_name: str) -> Optional[Dict]:
+        if self.hierarchical_semantic is None:
+            try:
+                self.hierarchical_semantic = HierarchicalSemanticPipeline()
+            except Exception as e:
+                logger.warning(f"Не удалось инициализировать иерархический семантик: {e}")
+                return None
+        return self.hierarchical_semantic.classify_product(product_name)
 
     def run(
             self,
@@ -279,6 +290,20 @@ class BERTPipeline:
         # Добавляем правила из классификатора и валидируем
         self._add_classifier_rules()
         predictions_df = self._validate_and_fix_codes(predictions_df)
+
+        # === Иерархический семантик как второе мнение для низкоуверенных предсказаний ===
+        if not load_existing_model:  # чтобы не тратить время при загрузке готовой модели
+            second_opinion_count = 0
+            for idx, row in predictions_df.iterrows():
+                if row['conf'] < 0.5:
+                    second = self._get_semantic_second_opinion(row['name_raw'])
+                    if second and second['score'] > 0.8:
+                        predictions_df.at[idx, 'okpd2_pred'] = second['predicted_code']
+                        predictions_df.at[idx, 'conf'] = second['score']
+                        second_opinion_count += 1
+            if second_opinion_count:
+                logger.info(f"Иерархический семантик исправил {second_opinion_count} низкоуверенных предсказаний")
+        # ==================================================================================
 
         # === Применяем экспертные правила (доменный бустинг) ===
         predictions_df = self.apply_domain_boosting(predictions_df, text_column="name_norm")
@@ -729,15 +754,32 @@ class BERTPipeline:
             lines.append("Accuracy НДС (совпадение с исходными ставками):")
             lines.append(f"- Совпало: {vat_matches} из {vat_total} ({vat_accuracy:.4f})")
 
-        # Топ-20 кодов по средней уверенности (текстовый блок)
-        if "okpd2_pred" in predictions_df.columns and "conf" in predictions_df.columns:
-            class_confidence = predictions_df.groupby("okpd2_pred")["conf"].agg(["mean", "count"]).reset_index()
-            class_confidence.columns = ["code", "avg_conf", "count"]
-            class_confidence = class_confidence.sort_values("avg_conf", ascending=False).head(20)
-            lines.append("")
-            lines.append("Топ-20 кодов по средней уверенности:")
-            for _, row in class_confidence.iterrows():
-                lines.append(f"  {row['code']}: ср.уверенность={row['avg_conf']:.4f}, записей={int(row['count'])}")
+            # Топ-20 кодов по средней уверенности (с названиями из классификатора)
+            if "okpd2_pred" in predictions_df.columns and "conf" in predictions_df.columns:
+                class_confidence = predictions_df.groupby("okpd2_pred")["conf"].agg(["mean", "count"]).reset_index()
+                class_confidence.columns = ["code", "avg_conf", "count"]
+                class_confidence = class_confidence.sort_values("avg_conf", ascending=False).head(20)
+
+                # Загружаем классификатор для получения названий
+                ref_path = self.config.OKPD2_REFERENCE_FILE
+                code_to_name = {}
+                if ref_path.exists():
+                    ref_df = pd.read_excel(ref_path)
+                    code_col = next((c for c in ref_df.columns if str(c).strip().lower() in ('code', 'okpd', 'okpd2')),
+                                    None)
+                    desc_col = next((c for c in ref_df.columns if
+                                     str(c).strip().lower() in ('description', 'desc', 'name', 'title')), None)
+                    if code_col and desc_col:
+                        for _, r in ref_df.iterrows():
+                            code_to_name[str(r[code_col]).strip()] = str(r[desc_col]).strip()
+
+                lines.append("")
+                lines.append("Топ-20 кодов по средней уверенности:")
+                for _, row in class_confidence.iterrows():
+                    code = row['code']
+                    name = code_to_name.get(code, "")
+                    display = f"{code} {name}" if name else code
+                    lines.append(f"  {display}: ср.уверенность={row['avg_conf']:.4f}, записей={int(row['count'])}")
 
         if hasattr(self, '_prod_metrics') and self._prod_metrics:
             lines.append("")

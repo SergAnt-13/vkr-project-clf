@@ -56,7 +56,7 @@ class SemanticPipeline:
         fine_tune: bool = True,
     ) -> Dict[str, object]:
         runtime = self._runtime_config(output_dir=output_dir, training_file=training_file)
-        
+
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         runtime.OUTPUT_DIR = runtime.OUTPUT_DIR / timestamp
@@ -94,7 +94,10 @@ class SemanticPipeline:
             batch_size=runtime.SEMANTIC_BATCH_SIZE,
         )
         if fine_tune:
-            retriever.maybe_finetune(self._build_training_pairs(training_df, description_by_code))
+            retriever.maybe_finetune(
+                self._build_training_pairs(training_df, description_by_code),
+                epochs=runtime.SEMANTIC_BI_ENCODER_EPOCHS
+            )
         retriever.build_or_load(reference_df)
 
         reranker = SemanticReranker(

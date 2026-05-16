@@ -74,6 +74,9 @@ class TextProcessor:
         if self.abbreviation_rules:
             text = self.apply_abbreviations(text)
         text = self.whitespace_pattern.sub(" ", text)
+        # Удаляем ведущие изолированные цифры (например, "0 Битки с луком")
+        import re
+        text = re.sub(r'^\d+\s+', '', text)
         return text.strip()
 
     def normalize_text_light_series(self, series: pd.Series) -> pd.Series:
@@ -131,7 +134,10 @@ class TextProcessor:
             minimal_clean = self.whitespace_pattern.sub(" ", minimal_clean).strip()
             if len(minimal_clean) >= 2:
                 return minimal_clean
-        
+
+        import re
+        text = re.sub(r'^\d+\s+', '', text)
+
         return text
     
     def normalize_text_series(self, series: pd.Series) -> pd.Series:

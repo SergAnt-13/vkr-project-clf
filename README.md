@@ -137,7 +137,7 @@
 .\.venv\Scripts\python cli.py bert --mode semantic --limit 20
 ```
 
-### 6 Semantic pipeline
+### 6 Semantic pipeline без долгого дообучения
 ```bash
 .\.venv\Scripts\python cli.py bert --mode semantic --skip-semantic-finetune
 ```
