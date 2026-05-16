@@ -116,7 +116,7 @@
 ### 2 BERT на исходном merged для обучения (1500 записей):
 
 ```bash
-.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_merged.xlsx" --validate
+.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_merged.xlsx"
 ```
 
 ### 3 BERT на расширенном enriched для обучения (3500 записей)
@@ -124,13 +124,25 @@
 .\.venv\Scripts\python enrich_training.py
 ```
 ```bash
-.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx" --validate
+.\.venv\Scripts\python cli.py bert --mode enhanced --training-file "data/training/Номенклатурные единицы_enriched.xlsx"
 ```
 
 ### 4 Использование последней выполненной модели для предсказания
 ```bash
 .\.venv\Scripts\python cli.py bert --mode enhanced --load-existing-model
 ```
+
+### 6 Semantic pipeline
+```bash
+.\.venv\Scripts\python cli.py bert --mode semantic --limit 20
+```
+
+### 6 Semantic pipeline
+```bash
+.\.venv\Scripts\python cli.py bert --mode semantic --skip-semantic-finetune
+```
+
+
 
 
 ### 5 Сравнение моделей

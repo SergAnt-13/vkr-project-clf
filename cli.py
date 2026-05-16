@@ -9,7 +9,8 @@ from typing import Iterable, Optional
 
 from config import config
 from data_loader import DataLoader
-from pipelines import BERTPipeline, BaselinePipeline
+from baseline_pipeline import BaselinePipeline
+from bert_pipeline import BERTPipeline
 from semantic_pipeline import SemanticPipeline
 
 

@@ -71,11 +71,19 @@ class Config:
     # Параметры семантического поиска
     SEMANTIC_BI_ENCODER_MODEL: str = "sberbank-ai/sbert_large_nlu_ru"
     SEMANTIC_CROSS_ENCODER_MODEL: str = "DiTy/cross-encoder-russian-msmarco"
-    SEMANTIC_TOP_K: int = 50
+    SEMANTIC_TOP_K: int = 15
     SEMANTIC_TOP_N_OUTPUT: int = 3
     SEMANTIC_BATCH_SIZE: int = 32
     SEMANTIC_CONFIDENT_THRESHOLD: float = 0.80
     SEMANTIC_UNCERTAIN_THRESHOLD: float = 0.40
+
+    # Список токенов, которые нужно полностью удалять из названий товаров (бренды, мусор)
+    IGNORE_TOKENS: List[str] = field(
+        default_factory=lambda: [
+            "яшкино", "ozera", "смак", "яшк", "яшкинские", "яшкинс", "brunchers", "bretцель", "бонди", "смак", "beerка", "beerka", "своя", "мельница", "mini", "babyfox", "бабкины", "бомбастер", "галерея вкусов", "галереявкусов", "Djazzy", "чайхана", "крут фрут", "gardelli", "мачо", "мачо хит", "маяма", "мэлори", "озерский", "озёрский", "El Alino", "fan", "flint", "forsite", "impulse", "krutnoff", "lifely", "smart formula", "tondi", "болжау", "ярче", "восток", "глобус", "агрохолдинг", "брендс", "воронеж", "воскресенск", "краснодар", "кузбасс", "кузбас", "нижний тагил", "тагил", "розница", "тула", "томфлекс", "алькор", "мтс", "терем", "корнел", "лик", "гранъ", "фрегат", "фудмастер"
+            # сюда же можно добавить другие бренды, которые встретятся
+        ]
+    )
 
     # Регулярное выражение для валидации кодов ОКПД2
     OKPD2_PATTERN: str = r"^\d{2}\.\d{2}(?:\.\d{2}){0,2}(?:\.\d{3})?$"
@@ -131,6 +139,7 @@ class Config:
         default_factory=lambda: [
             r"\b\d+\s?(г|гр|грамм|кг|мл|л)\b",
             r"\b\d+\s?/?\s?\d+\b",
+            r"\s+\d+\s?(г|гр|грамм|кг|мл|л)(\s?/\s?\d+)?\b.*$",
         ]
     )
 

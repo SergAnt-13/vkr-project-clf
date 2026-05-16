@@ -26,6 +26,25 @@ class SemanticPipeline:
     def __init__(self, config_obj=None):
         self.config = config_obj or config
 
+    def compute_bertscore(self, product_text: str, code_description: str) -> dict:
+        """Вычислить BERTScore между названием товара и описанием кода ОКПД2."""
+        try:
+            from bert_score import score as bert_score_fn
+            P, R, F1 = bert_score_fn(
+                [product_text], [code_description],
+                model_type="sberbank-ai/sbert_large_nlu_ru",
+                lang="ru", verbose=False,
+                device=self.device if hasattr(self, 'device') else 'cpu'
+            )
+            return {
+                "bertscore_precision": round(float(P[0]), 4),
+                "bertscore_recall": round(float(R[0]), 4),
+                "bertscore_f1": round(float(F1[0]), 4)
+            }
+        except Exception as e:
+            logger.warning(f"BERTScore не рассчитан: {e}")
+            return {}
+
     def run(
         self,
         prediction_file: Optional[Path] = None,
@@ -37,6 +56,12 @@ class SemanticPipeline:
         fine_tune: bool = True,
     ) -> Dict[str, object]:
         runtime = self._runtime_config(output_dir=output_dir, training_file=training_file)
+        
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        runtime.OUTPUT_DIR = runtime.OUTPUT_DIR / timestamp
+        runtime.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
         loader = DataLoader(runtime)
         vat_processor = VATProcessor(runtime)
         output_manager = OutputManager(runtime)
@@ -93,6 +118,14 @@ class SemanticPipeline:
             candidates = self._with_current_code_candidate(candidates, current_code, description_by_code)
             ranked = reranker.rerank(product_text, candidates, top_n=runtime.SEMANTIC_TOP_N_OUTPUT)
             rows.append(self._prediction_row(ranked, runtime.SEMANTIC_TOP_N_OUTPUT))
+            # # === BERTScore для топ-1 кода ===
+            # if ranked:
+            #     top1 = ranked[0]
+            #     if top1.description:
+            #         bert_metrics = self.compute_bertscore(product_text, top1.description)
+            #         if bert_metrics:
+            #             rows[-1].update(bert_metrics)
+            # # ===============================
             self._clear_gpu_cache(product_idx)
 
         semantic_df = pd.concat([prediction_df.reset_index(drop=True), pd.DataFrame(rows)], axis=1)
@@ -106,7 +139,9 @@ class SemanticPipeline:
         semantic_df["vat_pred"] = vat_processor.process_vat_predictions(semantic_df, "okpd2_final")
         semantic_df["vat_final"] = semantic_df["vat_pred"]
 
-        output_file = runtime.OUTPUT_DIR / f"{prediction_path.stem}_semantic.xlsx"
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = runtime.OUTPUT_DIR / f"{prediction_path.stem}_semantic_{timestamp}.xlsx"
         self._save_semantic_excel(semantic_df, output_file)
 
         tables = output_manager.create_analysis_tables(semantic_df)
@@ -257,7 +292,8 @@ class SemanticPipeline:
         }
         for row in range(2, worksheet.max_row + 1):
             flag = worksheet.cell(row=row, column=flag_col).value
-            fill = fills.get(flag)
+            flag_str = str(flag).strip() if flag is not None else ""
+            fill = fills.get(flag_str)
             if fill:
                 for col in range(1, worksheet.max_column + 1):
                     worksheet.cell(row=row, column=col).fill = fill

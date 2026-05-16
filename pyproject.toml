@@ -31,6 +31,8 @@ okpd-cli = "cli:main"
 [tool.setuptools]
 py-modules = [
   "bert_okpd_classifier",
+  "bert_pipeline",
+  "baseline_pipeline",
   "cli",
   "config",
   "data_loader",
