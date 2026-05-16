@@ -61,6 +61,7 @@ class BERTPipeline:
             max_rows: Optional[int] = None,
             training_max_rows: Optional[int] = None,
             validate: bool = False,
+            epochs: Optional[int] = None
     ) -> Dict[str, object]:
         runtime = self._runtime_config(output_dir, model_dir, training_file)
 
@@ -111,6 +112,9 @@ class BERTPipeline:
         if validate:
             # Честная валидация через внутренний split BERT
             fit_kwargs = self._bert_fit_kwargs(runtime, mode)
+            if epochs is not None:
+                fit_kwargs["num_epochs"] = epochs
+                logger.info(f"Число эпох переопределено через CLI: {epochs}")
             # classifier.use_small_loss = True
             # classifier.small_loss_threshold = 3.86
             # classifier.collect_loss_stats = True
@@ -119,7 +123,8 @@ class BERTPipeline:
                 text_column="name_norm",
                 label_column=label_column,
                 save_path=str(runtime.MODEL_DIR) if not load_existing_model else None,
-                **fit_kwargs,
+                num_epochs=epochs if epochs is not None else fit_kwargs.get("num_epochs", 5),
+                **{k: v for k, v in fit_kwargs.items() if k != "num_epochs"},
             )
 
             # Получаем предсказания на тестовой выборке, которую BERT сохранил внутри
@@ -232,13 +237,18 @@ class BERTPipeline:
             # classifier.small_loss_threshold = 3.86
         else:
             fit_kwargs = self._bert_fit_kwargs(runtime, mode)
+            if epochs is not None:
+                fit_kwargs["num_epochs"] = epochs
+                logger.info(
+                    f"DEBUG: epochs={epochs}, num_epochs будет: {epochs if epochs is not None else fit_kwargs.get('num_epochs', 5)}")
             # classifier.collect_loss_stats = True
             bert_metrics = classifier.fit(
                 training_df,
                 text_column="name_norm",
                 label_column=label_column,
                 save_path=str(runtime.MODEL_DIR),
-                **fit_kwargs,
+                num_epochs=epochs if epochs is not None else fit_kwargs.get("num_epochs", 5),
+                **{k: v for k, v in fit_kwargs.items() if k != "num_epochs"},
             )
 
         # Вычисляем prior на основе обучающей выборки
@@ -266,8 +276,9 @@ class BERTPipeline:
             predictions_df['conf'] = predictions_df.apply(adjust_conf, axis=1)
             logger.info("Уверенность скорректирована на основе априорных вероятностей классов")
 
-        # Добавляем правила из классификатора
+        # Добавляем правила из классификатора и валидируем
         self._add_classifier_rules()
+        predictions_df = self._validate_and_fix_codes(predictions_df)
 
         # === Применяем экспертные правила (доменный бустинг) ===
         predictions_df = self.apply_domain_boosting(predictions_df, text_column="name_norm")
@@ -604,6 +615,58 @@ class BERTPipeline:
         self.boosting_rules.update(rules_dict)
         logger.info(f"Добавлено {len(rules_dict)} правил из классификатора в доменный бустинг.")
 
+    def _validate_and_fix_codes(self, predictions_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Проверяет, что предсказанные коды есть в официальном классификаторе ОКПД2.
+        Если код невалидный — заменяет на ближайший родительский код или помечает флагом.
+        """
+        ref_path = self.config.OKPD2_REFERENCE_FILE
+        if not ref_path.exists():
+            logger.warning("Классификатор для валидации не найден.")
+            return predictions_df
+
+        ref_df = pd.read_excel(ref_path)
+        code_col = next((c for c in ref_df.columns if str(c).strip().lower() in ('code', 'okpd', 'okpd2')), None)
+        if code_col is None:
+            logger.warning("Колонка code не найдена в классификаторе.")
+            return predictions_df
+
+        valid_codes = set(ref_df[code_col].astype(str).str.strip())
+
+        # Строим словарь родительских кодов (если есть parent_code)
+        parent_map = {}
+        if 'parent_code' in ref_df.columns:
+            for _, row in ref_df.iterrows():
+                code = str(row[code_col]).strip()
+                parent = str(row['parent_code']).strip()
+                if parent and parent != 'nan':
+                    parent_map[code] = parent
+
+        fixed = 0
+        for idx, row in predictions_df.iterrows():
+            code = str(row.get('okpd2_pred', '')).strip()
+            if not code or code in valid_codes:
+                continue
+
+            # Пытаемся найти ближайший валидный родительский код
+            current = code
+            while current in parent_map:
+                current = parent_map[current]
+                if current in valid_codes:
+                    predictions_df.at[idx, 'okpd2_pred'] = current
+                    predictions_df.at[idx, 'conf'] = max(0.3, float(row.get('conf', 0.0)))
+                    fixed += 1
+                    break
+            else:
+                # Если не нашли валидного предка — помечаем как невалидный
+                predictions_df.at[idx, 'okpd2_pred'] = ""
+                predictions_df.at[idx, 'conf'] = 0.0
+                fixed += 1
+
+        if fixed:
+            logger.info(f"Исправлено/помечено невалидных кодов: {fixed}")
+        return predictions_df
+
     def _output_filename(self, mode: str, prediction_path: Path) -> str:
         suffix = "enhanced" if mode == "enhanced" else "standard"
         return f"{prediction_path.stem}_bert_{suffix}.xlsx"
@@ -665,6 +728,16 @@ class BERTPipeline:
             lines.append("")
             lines.append("Accuracy НДС (совпадение с исходными ставками):")
             lines.append(f"- Совпало: {vat_matches} из {vat_total} ({vat_accuracy:.4f})")
+
+        # Топ-20 кодов по средней уверенности (текстовый блок)
+        if "okpd2_pred" in predictions_df.columns and "conf" in predictions_df.columns:
+            class_confidence = predictions_df.groupby("okpd2_pred")["conf"].agg(["mean", "count"]).reset_index()
+            class_confidence.columns = ["code", "avg_conf", "count"]
+            class_confidence = class_confidence.sort_values("avg_conf", ascending=False).head(20)
+            lines.append("")
+            lines.append("Топ-20 кодов по средней уверенности:")
+            for _, row in class_confidence.iterrows():
+                lines.append(f"  {row['code']}: ср.уверенность={row['avg_conf']:.4f}, записей={int(row['count'])}")
 
         if hasattr(self, '_prod_metrics') and self._prod_metrics:
             lines.append("")

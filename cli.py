@@ -115,6 +115,12 @@ def add_common_dataset_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Обучить и оценить модель на отложенной части тренировочных данных (без предсказаний на основном файле).",
     )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Количество эпох обучения (переопределяет значение из конфига).",
+    )
 
 
 def command_inspect_data(_: argparse.Namespace) -> int:
@@ -160,6 +166,7 @@ def command_baseline(args: argparse.Namespace) -> int:
         max_rows=args.max_rows,
         training_max_rows=args.training_max_rows,
         validate=args.validate,
+        epochs=args.epochs,
     )
 
     print("Базовый пайплайн завершен.")
@@ -182,6 +189,7 @@ def command_bert(args: argparse.Namespace) -> int:
             training_max_rows=args.training_max_rows,
             limit=args.limit,
             fine_tune=not args.skip_semantic_finetune,
+            epochs=args.epochs,
         )
 
         print("Semantic pipeline completed.")
@@ -201,6 +209,7 @@ def command_bert(args: argparse.Namespace) -> int:
         max_rows=args.max_rows,
         training_max_rows=args.training_max_rows,
         validate=args.validate,
+        epochs=args.epochs,
     )
 
     print("BERT пайплайн завершен.")
